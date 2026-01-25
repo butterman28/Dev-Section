@@ -3,6 +3,7 @@
 let selectedPaths = new Set();
 let rootPath = '';
 let codeTreePanel = null;
+let currentPrompt = ''; 
 
 // Define what counts as a "script" file
 const SCRIPT_EXTENSIONS = new Set([
@@ -42,7 +43,7 @@ async function collectScriptFiles(dirPath) {
 }
 
 export function initializeCodeTree({ rootPath: root, treeContainer, parentSection }) {
-  rootPath = root;
+  rootPath = root.replace(/[\\/]+$/, '');
 
   // Inject UI into parentSection as first child (so it appears left)
   codeTreePanel = createCodeTreePanel();
@@ -56,21 +57,28 @@ function createCodeTreePanel() {
   const panel = document.createElement('div');
   panel.className = 'w-1/2 flex flex-col';
   panel.innerHTML = `
-    <h3 class="font-bold text-slate-800 mb-2">Selected Code Tree</h3>
-    <div id="code-tree-content" class="flex-1 overflow-auto bg-slate-100 p-3 rounded shadow-sm hide-scrollbar">
-      <p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>
-    </div>
-    <div class="mt-2 flex gap-2">
-      <button id="export-md" class="px-2 py-1 text-xs bg-blue-600 text-white rounded">Markdown</button>
-      <button id="export-js" class="px-2 py-1 text-xs bg-green-600 text-white rounded">JavaScript</button>
-      <button id="export-txt" class="px-2 py-1 text-xs bg-gray-700 text-white rounded">Text</button>
-    </div>
-  `;
+  <h3 class="font-bold text-slate-800 mb-2">Selected Code Tree</h3>
+  <div id="code-tree-content" class="flex-1 overflow-auto bg-slate-100 p-3 rounded shadow-sm ">
+    <p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>
+  </div>
+  <div class="mt-2 flex gap-2 flex-wrap">
+    <button id="export-md" class="px-2 py-1 text-xs bg-blue-600 text-white rounded">Markdown</button>
+    <button id="export-js" class="px-2 py-1 text-xs bg-green-600 text-white rounded">JavaScript</button>
+    <button id="export-txt" class="px-2 py-1 text-xs bg-gray-700 text-white rounded">Text</button>
+    <button id="clear-all" class="px-2 py-1 text-xs bg-red-600 text-white rounded">Clear All</button>
+  </div>
+`;
 
   // Attach export handlers
   panel.querySelector('#export-md').addEventListener('click', () => exportAs('md'));
   panel.querySelector('#export-js').addEventListener('click', () => exportAs('js'));
   panel.querySelector('#export-txt').addEventListener('click', () => exportAs('txt'));
+
+  panel.querySelector('#clear-all').addEventListener('click', () => {
+  selectedPaths.clear();
+  syncCheckboxes();
+  updateCodeTreePreview();
+});
 
   return panel;
 }
@@ -128,53 +136,67 @@ async function updateCodeTreePreview() {
     return;
   }
 
-  container.innerHTML = '<p class="text-slate-500">Loading content…</p>';
+  // Create wrapper for input + button + preview
+  const wrapper = document.createElement('div');
+  wrapper.className = 'flex flex-col h-full gap-2';
 
+  // Prompt input
+  const promptInput = document.createElement('input');
+  promptInput.type = 'text';
+  promptInput.placeholder = 'Enter a prompt for this code context...';
+  promptInput.value = currentPrompt;
+  promptInput.className = 'px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-blue-500';
+
+  // Add Prompt button
+  const addButton = document.createElement('button');
+  addButton.textContent = 'Add Prompt';
+  addButton.className = 'px-2 py-1 text-xs bg-blue-600 text-white rounded w-fit';
+  addButton.addEventListener('click', () => {
+    currentPrompt = promptInput.value.trim();
+    updateCodeTreePreview(); // re-render with prompt embedded
+  });
+
+  // Input + Button row
+  const inputRow = document.createElement('div');
+  inputRow.className = 'flex gap-2 items-center';
+  inputRow.appendChild(promptInput);
+  inputRow.appendChild(addButton);
+
+  // Preview area
+  const contentPre = document.createElement('pre');
+  contentPre.className = 'font-mono text-sm whitespace-pre overflow-auto flex-1 bg-white p-2 rounded';
+  contentPre.textContent = 'Loading content…';
+
+  wrapper.appendChild(inputRow);
+  wrapper.appendChild(contentPre);
+  container.innerHTML = '';
+  container.appendChild(wrapper);
+
+  // Load file content
   const { invoke } = window.__TAURI__.core;
-  const items = [];
+  let previewContent = '';
 
-  for (const path of selectedPaths) {
+  if (currentPrompt) {
+    previewContent += `${currentPrompt}\n---\n\n`;
+  }
+
+  const sortedPaths = Array.from(selectedPaths).sort();
+  for (const fullPath of sortedPaths) {
     try {
-      const stats = await invoke('get_file_stats', { path });
-      if (!stats.is_dir) {
-        const content = await invoke('read_file', { path });
-        items.push({ path, content, isDir: false });
-      } else {
-        items.push({ path, content: null, isDir: true });
-      }
+      const stats = await invoke('get_file_stats', { path: fullPath });
+      if (stats.is_dir) continue;
+
+      const content = await invoke('read_file', { path: fullPath });
+      const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
+      previewContent += `# ${relPath}\n${content}\n\n`;
     } catch (err) {
-      items.push({ path, content: `<!-- Error: ${err.message} -->`, isDir: false });
+      const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
+      previewContent += `# ${relPath} [ERROR: ${String(err)}]\n\n`;
     }
   }
 
-  // Render
-  container.innerHTML = '';
-  items.forEach(item => {
-    const div = document.createElement('div');
-    div.className = 'mb-3';
-
-    const name = item.path.split('/').pop();
-    const header = document.createElement('div');
-    header.className = 'flex items-center gap-2';
-    header.innerHTML = `<strong class="truncate-button">${name}</strong>`;
-
-    if (!item.isDir) {
-      const promptBtn = document.createElement('button');
-      promptBtn.textContent = '✏️';
-      promptBtn.className = 'text-xs text-blue-600';
-      promptBtn.title = 'Add custom prompt';
-      promptBtn.onclick = () => showPromptModal(item.path);
-      header.appendChild(promptBtn);
-
-      const pre = document.createElement('pre');
-      pre.className = 'bg-white p-2 rounded text-xs mt-1 max-h-32 overflow-auto font-mono';
-      pre.textContent = item.content;
-      div.appendChild(pre);
-    }
-
-    div.prepend(header);
-    container.appendChild(div);
-  });
+  previewContent = previewContent.trimEnd();
+  contentPre.textContent = previewContent;
 }
 
 // Placeholder — you can integrate with your existing modal system
@@ -185,45 +207,105 @@ function showPromptModal(path) {
 async function exportAs(format) {
   const { save } = window.__TAURI__.dialog;
   const { writeTextFile } = window.__TAURI__.fs;
-  const { invoke } = window.__TAURI__.core;
 
   let output = '';
 
-  if (format === 'md') {
-    output = `# Code Tree Export\n\nRoot: \`${rootPath}\`\n\n`;
-    for (const path of selectedPaths) {
-      try {
-        const stats = await invoke('get_file_stats', { path });
-        if (!stats.is_dir) {
-          const content = await invoke('read_file', { path });
-          const relPath = path.replace(rootPath, '').replace(/^\/|\\/, '');
-          output += `\n## ${relPath}\n\n\`\`\`js\n${content}\n\`\`\`\n`;
-        }
-      } catch (err) {
-        output += `\n## ${path} (error)\n\n<!-- Failed to read -->\n`;
-      }
-    }
-  } else if (format === 'js') {
-    const tree = {};
-    for (const path of selectedPaths) {
-      try {
-        const stats = await invoke('get_file_stats', { path });
-        if (!stats.is_dir) {
-          const content = await invoke('read_file', { path });
-          const key = path.replace(rootPath, '').replace(/^[/\\]/, '');
-          tree[key] = content;
-        }
-      } catch {}
-    }
-    output = `const codeTree = ${JSON.stringify(tree, null, 2)};`;
-  } else {
-    output = Array.from(selectedPaths).join('\n');
+  if (currentPrompt) {
+    output += `${currentPrompt}\n---\n\n`;
   }
 
+  const { invoke } = window.__TAURI__.core;
+  const sortedPaths = Array.from(selectedPaths).sort();
+  for (const fullPath of sortedPaths) {
+    try {
+      const stats = await invoke('get_file_stats', { path: fullPath });
+      if (stats.is_dir) continue;
+
+      const content = await invoke('read_file', { path: fullPath });
+      const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
+      output += `# ${relPath}\n${content}\n\n`;
+    } catch (err) {
+      const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
+      output += `# ${relPath} [ERROR: ${String(err)}]\n\n`;
+    }
+  }
+
+  output = output.trimEnd() + '\n';
+
   const filePath = await save({
-    filters: [{ name: format.toUpperCase(), extensions: [format] }],
+    filters: [{ name: "Plain Text", extensions: ["txt"] }],
+    defaultPath: `code-context.txt`
   });
+
   if (filePath) {
     await writeTextFile(filePath, output);
   }
+}
+function buildSelectedTree() {
+  const tree = {
+    name: rootPath.split(/[\\/]/).pop() || 'root',
+    path: rootPath,
+    children: {},
+    isDir: true
+  };
+
+  // Sort paths so parents are processed before children
+  const sortedPaths = Array.from(selectedPaths).sort();
+
+  for (const fullPath of sortedPaths) {
+    const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
+    if (!relPath) continue;
+
+    const parts = relPath.split(/[\\/]/);
+    let current = tree;
+
+    // Traverse/create intermediate folders
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const isFile = i === parts.length - 1;
+      const key = parts.slice(0, i + 1).join('/');
+
+      if (!current.children[key]) {
+        current.children[key] = {
+          name: part,
+          path: rootPath + '/' + key,
+          children: isFile ? null : {},
+          isDir: !isFile,
+          isSelected: isFile // only files are "selected"
+        };
+      }
+
+      if (!isFile) {
+        current = current.children[key];
+      }
+    }
+  }
+
+  return tree;
+}
+
+export function createPromptBar(container, onSearch) {
+  // Don’t create twice
+  if (container.querySelector('#folder-search')) return;
+
+  const promptBar = document.createElement('div');
+  promptBar.className = 'mb-3';
+  promptBar.innerHTML = `
+    <input
+      type="text"
+      id="promptbar"
+      placeholder="Search folders..."
+      class="w-full px-3 py-1.5 text-sm border rounded-md border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+    />
+  `;
+
+  container.insertBefore(promptBar, container.firstChild);
+
+  const input = searchBar.querySelector('#promptbar');
+  input.addEventListener('input', (e) => {
+    const term = e.target.value.trim().toLowerCase();
+    onSearch(term);
+  });
+
+  return input;
 }

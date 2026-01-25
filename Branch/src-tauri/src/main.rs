@@ -1,7 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 mod tree;
 use tree::{build_tree, TreeNode,IGNORED_DIRS};
+use std::fs;
+use std::path::PathBuf;
+use serde::Serialize;
+
+#[derive(Serialize)]
+pub struct FileStat {
+    pub is_dir: bool,
+    // You can add more fields later if needed (size, modified, etc.)
+}
 
 #[tauri::command]
 fn get_tree_for_path(path: String) -> Result<TreeNode, String> {
@@ -19,6 +27,23 @@ fn get_tree_for_path(path: String) -> Result<TreeNode, String> {
         children: Vec::new(), // IMPORTANT: empty
     })
 }
+
+#[tauri::command]
+fn read_file(path: String) -> Result<String, String> {
+    fs::read_to_string(&path)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_file_stats(path: String) -> Result<FileStat, String> {
+    let metadata = fs::metadata(&path)
+        .map_err(|e| e.to_string())?;
+    
+    Ok(FileStat {
+        is_dir: metadata.is_dir(),
+    })
+}
+
 
 
 #[tauri::command]
@@ -80,6 +105,8 @@ fn main() {
             get_tree_for_path,
             get_launch_dir,
             get_children_for_path,
+            read_file,
+            get_file_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Branch");

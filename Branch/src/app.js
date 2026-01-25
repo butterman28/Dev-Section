@@ -61,9 +61,9 @@ async function showSubfolderModal(folderNode, renderNodeFn) {
 // src/assets/components/search.js
 function createSearchBar(container, onSearch) {
   if (container.querySelector("#folder-search")) return;
-  const searchBar = document.createElement("div");
-  searchBar.className = "mb-3";
-  searchBar.innerHTML = `
+  const searchBar2 = document.createElement("div");
+  searchBar2.className = "mb-3";
+  searchBar2.innerHTML = `
     <input
       type="text"
       id="folder-search"
@@ -71,8 +71,8 @@ function createSearchBar(container, onSearch) {
       class="w-full px-3 py-1.5 text-sm border rounded-md border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
     />
   `;
-  container.insertBefore(searchBar, container.firstChild);
-  const input = searchBar.querySelector("#folder-search");
+  container.insertBefore(searchBar2, container.firstChild);
+  const input = searchBar2.querySelector("#folder-search");
   input.addEventListener("input", (e) => {
     const term = e.target.value.trim().toLowerCase();
     onSearch(term);
@@ -84,6 +84,7 @@ function createSearchBar(container, onSearch) {
 var selectedPaths = /* @__PURE__ */ new Set();
 var rootPath = "";
 var codeTreePanel = null;
+var currentPrompt = "";
 var SCRIPT_EXTENSIONS = /* @__PURE__ */ new Set([
   ".js",
   ".ts",
@@ -141,7 +142,7 @@ async function collectScriptFiles(dirPath) {
   return scripts;
 }
 function initializeCodeTree({ rootPath: root, treeContainer, parentSection }) {
-  rootPath = root;
+  rootPath = root.replace(/[\\/]+$/, "");
   codeTreePanel = createCodeTreePanel();
   parentSection.prepend(codeTreePanel);
   treeContainer.addEventListener("change", handleCheckboxChange);
@@ -150,19 +151,25 @@ function createCodeTreePanel() {
   const panel = document.createElement("div");
   panel.className = "w-1/2 flex flex-col";
   panel.innerHTML = `
-    <h3 class="font-bold text-slate-800 mb-2">Selected Code Tree</h3>
-    <div id="code-tree-content" class="flex-1 overflow-auto bg-slate-100 p-3 rounded shadow-sm hide-scrollbar">
-      <p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>
-    </div>
-    <div class="mt-2 flex gap-2">
-      <button id="export-md" class="px-2 py-1 text-xs bg-blue-600 text-white rounded">Markdown</button>
-      <button id="export-js" class="px-2 py-1 text-xs bg-green-600 text-white rounded">JavaScript</button>
-      <button id="export-txt" class="px-2 py-1 text-xs bg-gray-700 text-white rounded">Text</button>
-    </div>
-  `;
+  <h3 class="font-bold text-slate-800 mb-2">Selected Code Tree</h3>
+  <div id="code-tree-content" class="flex-1 overflow-auto bg-slate-100 p-3 rounded shadow-sm ">
+    <p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>
+  </div>
+  <div class="mt-2 flex gap-2 flex-wrap">
+    <button id="export-md" class="px-2 py-1 text-xs bg-blue-600 text-white rounded">Markdown</button>
+    <button id="export-js" class="px-2 py-1 text-xs bg-green-600 text-white rounded">JavaScript</button>
+    <button id="export-txt" class="px-2 py-1 text-xs bg-gray-700 text-white rounded">Text</button>
+    <button id="clear-all" class="px-2 py-1 text-xs bg-red-600 text-white rounded">Clear All</button>
+  </div>
+`;
   panel.querySelector("#export-md").addEventListener("click", () => exportAs("md"));
   panel.querySelector("#export-js").addEventListener("click", () => exportAs("js"));
   panel.querySelector("#export-txt").addEventListener("click", () => exportAs("txt"));
+  panel.querySelector("#clear-all").addEventListener("click", () => {
+    selectedPaths.clear();
+    syncCheckboxes();
+    updateCodeTreePreview();
+  });
   return panel;
 }
 async function handleCheckboxChange(e) {
@@ -203,102 +210,93 @@ async function updateCodeTreePreview() {
     container.innerHTML = '<p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>';
     return;
   }
-  container.innerHTML = '<p class="text-slate-500">Loading content\u2026</p>';
+  const wrapper = document.createElement("div");
+  wrapper.className = "flex flex-col h-full gap-2";
+  const promptInput = document.createElement("input");
+  promptInput.type = "text";
+  promptInput.placeholder = "Enter a prompt for this code context...";
+  promptInput.value = currentPrompt;
+  promptInput.className = "px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-blue-500";
+  const addButton = document.createElement("button");
+  addButton.textContent = "Add Prompt";
+  addButton.className = "px-2 py-1 text-xs bg-blue-600 text-white rounded w-fit";
+  addButton.addEventListener("click", () => {
+    currentPrompt = promptInput.value.trim();
+    updateCodeTreePreview();
+  });
+  const inputRow = document.createElement("div");
+  inputRow.className = "flex gap-2 items-center";
+  inputRow.appendChild(promptInput);
+  inputRow.appendChild(addButton);
+  const contentPre = document.createElement("pre");
+  contentPre.className = "font-mono text-sm whitespace-pre overflow-auto flex-1 bg-white p-2 rounded";
+  contentPre.textContent = "Loading content\u2026";
+  wrapper.appendChild(inputRow);
+  wrapper.appendChild(contentPre);
+  container.innerHTML = "";
+  container.appendChild(wrapper);
   const { invoke: invoke3 } = window.__TAURI__.core;
-  const items = [];
-  for (const path of selectedPaths) {
+  let previewContent = "";
+  if (currentPrompt) {
+    previewContent += `${currentPrompt}
+---
+
+`;
+  }
+  const sortedPaths = Array.from(selectedPaths).sort();
+  for (const fullPath of sortedPaths) {
     try {
-      const stats = await invoke3("get_file_stats", { path });
-      if (!stats.is_dir) {
-        const content = await invoke3("read_file", { path });
-        items.push({ path, content, isDir: false });
-      } else {
-        items.push({ path, content: null, isDir: true });
-      }
+      const stats = await invoke3("get_file_stats", { path: fullPath });
+      if (stats.is_dir) continue;
+      const content = await invoke3("read_file", { path: fullPath });
+      const relPath = fullPath.replace(rootPath, "").replace(/^[\\/]/, "");
+      previewContent += `# ${relPath}
+${content}
+
+`;
     } catch (err) {
-      items.push({ path, content: `<!-- Error: ${err.message} -->`, isDir: false });
+      const relPath = fullPath.replace(rootPath, "").replace(/^[\\/]/, "");
+      previewContent += `# ${relPath} [ERROR: ${String(err)}]
+
+`;
     }
   }
-  container.innerHTML = "";
-  items.forEach((item) => {
-    const div = document.createElement("div");
-    div.className = "mb-3";
-    const name = item.path.split("/").pop();
-    const header = document.createElement("div");
-    header.className = "flex items-center gap-2";
-    header.innerHTML = `<strong class="truncate-button">${name}</strong>`;
-    if (!item.isDir) {
-      const promptBtn = document.createElement("button");
-      promptBtn.textContent = "\u270F\uFE0F";
-      promptBtn.className = "text-xs text-blue-600";
-      promptBtn.title = "Add custom prompt";
-      promptBtn.onclick = () => showPromptModal(item.path);
-      header.appendChild(promptBtn);
-      const pre = document.createElement("pre");
-      pre.className = "bg-white p-2 rounded text-xs mt-1 max-h-32 overflow-auto font-mono";
-      pre.textContent = item.content;
-      div.appendChild(pre);
-    }
-    div.prepend(header);
-    container.appendChild(div);
-  });
-}
-function showPromptModal(path) {
-  alert(`Prompt for: ${path}
-(You can replace this with your unified modal)`);
+  previewContent = previewContent.trimEnd();
+  contentPre.textContent = previewContent;
 }
 async function exportAs(format) {
   const { save } = window.__TAURI__.dialog;
   const { writeTextFile } = window.__TAURI__.fs;
-  const { invoke: invoke3 } = window.__TAURI__.core;
   let output = "";
-  if (format === "md") {
-    output = `# Code Tree Export
-
-Root: \`${rootPath}\`
+  if (currentPrompt) {
+    output += `${currentPrompt}
+---
 
 `;
-    for (const path of selectedPaths) {
-      try {
-        const stats = await invoke3("get_file_stats", { path });
-        if (!stats.is_dir) {
-          const content = await invoke3("read_file", { path });
-          const relPath = path.replace(rootPath, "").replace(/^\/|\\/, "");
-          output += `
-## ${relPath}
-
-\`\`\`js
-${content}
-\`\`\`
-`;
-        }
-      } catch (err) {
-        output += `
-## ${path} (error)
-
-<!-- Failed to read -->
-`;
-      }
-    }
-  } else if (format === "js") {
-    const tree = {};
-    for (const path of selectedPaths) {
-      try {
-        const stats = await invoke3("get_file_stats", { path });
-        if (!stats.is_dir) {
-          const content = await invoke3("read_file", { path });
-          const key = path.replace(rootPath, "").replace(/^[/\\]/, "");
-          tree[key] = content;
-        }
-      } catch {
-      }
-    }
-    output = `const codeTree = ${JSON.stringify(tree, null, 2)};`;
-  } else {
-    output = Array.from(selectedPaths).join("\n");
   }
+  const { invoke: invoke3 } = window.__TAURI__.core;
+  const sortedPaths = Array.from(selectedPaths).sort();
+  for (const fullPath of sortedPaths) {
+    try {
+      const stats = await invoke3("get_file_stats", { path: fullPath });
+      if (stats.is_dir) continue;
+      const content = await invoke3("read_file", { path: fullPath });
+      const relPath = fullPath.replace(rootPath, "").replace(/^[\\/]/, "");
+      output += `# ${relPath}
+${content}
+
+`;
+    } catch (err) {
+      const relPath = fullPath.replace(rootPath, "").replace(/^[\\/]/, "");
+      output += `# ${relPath} [ERROR: ${String(err)}]
+
+`;
+    }
+  }
+  output = output.trimEnd() + "\n";
   const filePath = await save({
-    filters: [{ name: format.toUpperCase(), extensions: [format] }]
+    filters: [{ name: "Plain Text", extensions: ["txt"] }],
+    defaultPath: `code-context.txt`
   });
   if (filePath) {
     await writeTextFile(filePath, output);

@@ -12,6 +12,11 @@ pub struct TreeNode {
     pub children: Vec<TreeNode>,
 }
 
+#[derive(Serialize)]
+pub struct FileStat {
+    pub is_dir: bool,
+}
+
 pub fn build_tree(path: &Path) -> Option<TreeNode> {
     let name = path
         .file_name()

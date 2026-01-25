@@ -9,6 +9,53 @@
     <script type="module" src="/main.js" defer></script>
     <style>
       /* styles.css */
+      /* Tree line styles */
+.tree-node {
+  position: relative;
+  padding-left: 20px;
+}
+
+.tree-node::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid #ccc;
+}
+
+.tree-node::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 12px;
+  width: 10px;
+  border-top: 1px solid #ccc;
+}
+
+.tree-node.last-child::before {
+  height: 12px;
+}
+
+.tree-node:not(.last-child)::after {
+  width: 10px;
+}
+
+.tree-node.last-child::before {
+  height: 12px;
+}
+
+#code-tree-content > div.tree-node::before,
+#code-tree-content > div.tree-node::after {
+  display: none;
+}
+
+.tree-node > div:first-child {
+  position: relative;
+  z-index: 1;
+  background: white;
+  padding-right: 8px;
+}
         .truncate-button {
           max-width: 160px; /* adjust as needed */
           white-space: nowrap;
