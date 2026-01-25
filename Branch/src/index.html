@@ -28,26 +28,21 @@
 
   <body class="bg-slate-50 text-slate-900">
   <main class="h-screen flex flex-col">
+    <!-- Content -->
+    <!-- Main content area: side-by-side panels -->
+    <section class="flex-1 overflow-hidden p-4 flex gap-4">
+      <!-- Left panel: Code Tree (will be injected here by codeTree.js) -->
 
-    <!-- Header -->
-    <header class="px-4 py-3 border-b bg-white">
-      <h1 class="text-lg font-semibold">Branch</h1>
-      <p class="text-xs text-slate-500">
-        Project Tree Explorer
-      </p>
-    </header>
-    <!-- Content -->
-    <!-- Content -->
-    <!-- Content -->
-    <section class="flex-1 overflow-auto p-4 flex flex-col items-start">
-      <!-- Folder Overview: 70% of screen width -->
-      <div class="w-[50%] mb-4">
-        <div id="folder-overview" class="flex flex-nowrap gap-2 overflow-x-auto pb-1 "></div>
-      </div>
+      <!-- Right panel: Folder controls + file tree -->
+      <div class="w-1/2 flex flex-col">
+        <!-- Search + Folder Overview -->
+        <div id="folder-controls" class="mb-4">
+          <!-- Search bar will be injected here by createSearchBar() -->
+          <div id="folder-overview" class="flex flex-nowrap gap-2 overflow-x-auto pb-1 hide-scrollbar"></div>
+        </div>
 
-      <!-- Tree: 50% of screen width -->
-      <div class="w-[50%]">
-        <div id="tree" class="bg-white rounded-lg shadow-sm p-4">
+        <!-- File Tree -->
+        <div id="tree" class="flex-1 overflow-auto bg-white rounded-lg shadow-sm p-4 text-sm font-mono hide-scrollbar">
           <p class="text-slate-400">Loading…</p>
         </div>
       </div>

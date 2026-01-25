@@ -1,4 +1,4 @@
-// src/modal.js
+// src/assets/components/modal.js
 var { invoke } = window.__TAURI__.core;
 var modalInitialized = false;
 var currentModal = null;
@@ -80,21 +80,257 @@ function createSearchBar(container, onSearch) {
   return input;
 }
 
+// src/assets/components/codeTree.js
+var selectedPaths = /* @__PURE__ */ new Set();
+var rootPath = "";
+var codeTreePanel = null;
+var SCRIPT_EXTENSIONS = /* @__PURE__ */ new Set([
+  ".js",
+  ".ts",
+  ".jsx",
+  ".tsx",
+  ".mjs",
+  ".cjs",
+  ".py",
+  ".sh",
+  ".bash",
+  ".rb",
+  ".php",
+  ".pl",
+  ".go",
+  ".rs",
+  ".java",
+  ".cs",
+  ".swift",
+  ".kt",
+  ".lua",
+  ".r",
+  ".scala",
+  ".clj",
+  ".ex",
+  ".erl",
+  ".sql",
+  ".json",
+  ".yaml",
+  ".yml",
+  ".toml",
+  ".md"
+]);
+function isScriptFile(path) {
+  const dotIndex = path.lastIndexOf(".");
+  if (dotIndex === -1) return false;
+  const ext = path.slice(dotIndex).toLowerCase();
+  return SCRIPT_EXTENSIONS.has(ext);
+}
+async function collectScriptFiles(dirPath) {
+  const { invoke: invoke3 } = window.__TAURI__.core;
+  const scripts = [];
+  try {
+    const children = await invoke3("get_children_for_path", { path: dirPath });
+    for (const child of children) {
+      if (child.is_dir) {
+        const subScripts = await collectScriptFiles(child.path);
+        scripts.push(...subScripts);
+      } else if (isScriptFile(child.path)) {
+        scripts.push(child.path);
+      }
+    }
+  } catch (err) {
+    console.warn(`Failed to read directory: ${dirPath}`, err);
+  }
+  return scripts;
+}
+function initializeCodeTree({ rootPath: root, treeContainer, parentSection }) {
+  rootPath = root;
+  codeTreePanel = createCodeTreePanel();
+  parentSection.prepend(codeTreePanel);
+  treeContainer.addEventListener("change", handleCheckboxChange);
+}
+function createCodeTreePanel() {
+  const panel = document.createElement("div");
+  panel.className = "w-1/2 flex flex-col";
+  panel.innerHTML = `
+    <h3 class="font-bold text-slate-800 mb-2">Selected Code Tree</h3>
+    <div id="code-tree-content" class="flex-1 overflow-auto bg-slate-100 p-3 rounded shadow-sm hide-scrollbar">
+      <p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>
+    </div>
+    <div class="mt-2 flex gap-2">
+      <button id="export-md" class="px-2 py-1 text-xs bg-blue-600 text-white rounded">Markdown</button>
+      <button id="export-js" class="px-2 py-1 text-xs bg-green-600 text-white rounded">JavaScript</button>
+      <button id="export-txt" class="px-2 py-1 text-xs bg-gray-700 text-white rounded">Text</button>
+    </div>
+  `;
+  panel.querySelector("#export-md").addEventListener("click", () => exportAs("md"));
+  panel.querySelector("#export-js").addEventListener("click", () => exportAs("js"));
+  panel.querySelector("#export-txt").addEventListener("click", () => exportAs("txt"));
+  return panel;
+}
+async function handleCheckboxChange(e) {
+  if (!e.target.matches('input[type="checkbox"]')) return;
+  const path = e.target.dataset.path;
+  const isChecked = e.target.checked;
+  const isDir = !!document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
+  if (isDir) {
+    const scriptPaths = await collectScriptFiles(path);
+    if (isChecked) {
+      scriptPaths.forEach((p) => selectedPaths.add(p));
+    } else {
+      scriptPaths.forEach((p) => selectedPaths.delete(p));
+    }
+  } else {
+    if (isChecked) {
+      selectedPaths.add(path);
+    } else {
+      selectedPaths.delete(path);
+    }
+  }
+  syncCheckboxes();
+  updateCodeTreePreview();
+}
+function syncCheckboxes() {
+  document.querySelectorAll('#tree input[type="checkbox"]').forEach((cb) => {
+    cb.checked = false;
+  });
+  selectedPaths.forEach((path) => {
+    const cb = document.querySelector(`#tree input[type="checkbox"][data-path="${CSS.escape(path)}"]`);
+    if (cb) cb.checked = true;
+  });
+}
+async function updateCodeTreePreview() {
+  const container = document.getElementById("code-tree-content");
+  if (!container) return;
+  if (selectedPaths.size === 0) {
+    container.innerHTML = '<p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>';
+    return;
+  }
+  container.innerHTML = '<p class="text-slate-500">Loading content\u2026</p>';
+  const { invoke: invoke3 } = window.__TAURI__.core;
+  const items = [];
+  for (const path of selectedPaths) {
+    try {
+      const stats = await invoke3("get_file_stats", { path });
+      if (!stats.is_dir) {
+        const content = await invoke3("read_file", { path });
+        items.push({ path, content, isDir: false });
+      } else {
+        items.push({ path, content: null, isDir: true });
+      }
+    } catch (err) {
+      items.push({ path, content: `<!-- Error: ${err.message} -->`, isDir: false });
+    }
+  }
+  container.innerHTML = "";
+  items.forEach((item) => {
+    const div = document.createElement("div");
+    div.className = "mb-3";
+    const name = item.path.split("/").pop();
+    const header = document.createElement("div");
+    header.className = "flex items-center gap-2";
+    header.innerHTML = `<strong class="truncate-button">${name}</strong>`;
+    if (!item.isDir) {
+      const promptBtn = document.createElement("button");
+      promptBtn.textContent = "\u270F\uFE0F";
+      promptBtn.className = "text-xs text-blue-600";
+      promptBtn.title = "Add custom prompt";
+      promptBtn.onclick = () => showPromptModal(item.path);
+      header.appendChild(promptBtn);
+      const pre = document.createElement("pre");
+      pre.className = "bg-white p-2 rounded text-xs mt-1 max-h-32 overflow-auto font-mono";
+      pre.textContent = item.content;
+      div.appendChild(pre);
+    }
+    div.prepend(header);
+    container.appendChild(div);
+  });
+}
+function showPromptModal(path) {
+  alert(`Prompt for: ${path}
+(You can replace this with your unified modal)`);
+}
+async function exportAs(format) {
+  const { save } = window.__TAURI__.dialog;
+  const { writeTextFile } = window.__TAURI__.fs;
+  const { invoke: invoke3 } = window.__TAURI__.core;
+  let output = "";
+  if (format === "md") {
+    output = `# Code Tree Export
+
+Root: \`${rootPath}\`
+
+`;
+    for (const path of selectedPaths) {
+      try {
+        const stats = await invoke3("get_file_stats", { path });
+        if (!stats.is_dir) {
+          const content = await invoke3("read_file", { path });
+          const relPath = path.replace(rootPath, "").replace(/^\/|\\/, "");
+          output += `
+## ${relPath}
+
+\`\`\`js
+${content}
+\`\`\`
+`;
+        }
+      } catch (err) {
+        output += `
+## ${path} (error)
+
+<!-- Failed to read -->
+`;
+      }
+    }
+  } else if (format === "js") {
+    const tree = {};
+    for (const path of selectedPaths) {
+      try {
+        const stats = await invoke3("get_file_stats", { path });
+        if (!stats.is_dir) {
+          const content = await invoke3("read_file", { path });
+          const key = path.replace(rootPath, "").replace(/^[/\\]/, "");
+          tree[key] = content;
+        }
+      } catch {
+      }
+    }
+    output = `const codeTree = ${JSON.stringify(tree, null, 2)};`;
+  } else {
+    output = Array.from(selectedPaths).join("\n");
+  }
+  const filePath = await save({
+    filters: [{ name: format.toUpperCase(), extensions: [format] }]
+  });
+  if (filePath) {
+    await writeTextFile(filePath, output);
+  }
+}
+
 // src/main.js
 var { invoke: invoke2 } = window.__TAURI__.core;
 var rootNode = null;
 function renderNode(node) {
   const li = document.createElement("li");
   li.className = "ml-4";
+  const itemContainer = document.createElement("div");
+  itemContainer.className = "flex items-center gap-1.5";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.dataset.path = node.path;
+  checkbox.className = "mt-0.5 h-4 w-4";
+  const nameLabel = document.createElement("span");
+  nameLabel.textContent = node.name;
+  nameLabel.className = node.is_dir ? "cursor-pointer font-medium text-slate-800 hover:text-blue-600" : "text-slate-600";
+  itemContainer.appendChild(checkbox);
+  itemContainer.appendChild(nameLabel);
   if (node.is_dir) {
     const details = document.createElement("details");
     details.dataset.path = node.path;
     details.dataset.loaded = "false";
     const summary = document.createElement("summary");
-    summary.textContent = node.name;
-    summary.className = "cursor-pointer font-medium text-slate-800 hover:text-blue-600";
+    summary.className = "list-none cursor-pointer";
+    summary.appendChild(itemContainer);
     const ul = document.createElement("ul");
-    ul.className = "border-l border-slate-300 ml-2 pl-2";
+    ul.className = "border-l border-slate-300 ml-2 pl-2 mt-1";
     details.appendChild(summary);
     details.appendChild(ul);
     li.appendChild(details);
@@ -126,7 +362,7 @@ function renderNode(node) {
       }
     });
   } else {
-    li.textContent = node.name;
+    li.replaceChildren(itemContainer);
     li.className = "ml-6 text-slate-600 hover:text-slate-900 cursor-default";
     li.dataset.path = node.path;
   }
@@ -137,17 +373,18 @@ function renderFolderButtons(folders, container) {
   const bar = document.createElement("div");
   bar.className = "flex flex-nowrap gap-2 mb-4  pb-1 ";
   folders.forEach((folder) => {
-    const wrapper = document.createElement("div");
-    wrapper.className = "flex items-center gap-1";
+    const buttonGroup = document.createElement("div");
+    buttonGroup.className = "flex items-center bg-white border border-slate-300 rounded-md overflow-hidden hover:bg-slate-50";
     const eyeBtn = document.createElement("button");
     eyeBtn.type = "button";
-    eyeBtn.className = "flex items-center gap-1.5 px-2.5 py-1 bg-white rounded border text-xs font-medium text-slate-700 hover:bg-slate-50 max-w-[180px]";
+    eyeBtn.className = "flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-slate-700";
+    eyeBtn.title = "Toggle folder visibility";
     const eyeIcon = document.createElement("span");
-    eyeIcon.textContent = "\u{1F441}\uFE0F";
+    eyeIcon.textContent = "\u{1F648}";
     eyeIcon.setAttribute("aria-hidden", "true");
     const nameSpan = document.createElement("span");
     nameSpan.textContent = folder.name;
-    nameSpan.className = "truncate";
+    nameSpan.className = "truncate max-w-[140px]";
     eyeBtn.appendChild(eyeIcon);
     eyeBtn.appendChild(nameSpan);
     eyeBtn.addEventListener("click", () => {
@@ -160,15 +397,18 @@ function renderFolderButtons(folders, container) {
       }
     });
     const subBtn = document.createElement("button");
-    subBtn.className = "ml-1 w-6 h-6 flex items-center justify-center text-xs text-slate-500 hover:bg-slate-200 rounded";
+    subBtn.className = "w-7 flex items-center justify-center text-xs text-slate-500 hover:bg-slate-200";
     subBtn.textContent = "\u25BC";
     subBtn.title = "View subfolders";
     subBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       showSubfolderModal(folder, renderNode);
     });
-    wrapper.appendChild(eyeBtn);
-    wrapper.appendChild(subBtn);
+    buttonGroup.appendChild(eyeBtn);
+    buttonGroup.appendChild(subBtn);
+    const wrapper = document.createElement("div");
+    wrapper.className = "flex-shrink-0";
+    wrapper.appendChild(buttonGroup);
     bar.appendChild(wrapper);
   });
   container.appendChild(bar);
@@ -193,52 +433,17 @@ async function loadTree() {
     const foldersOnly = topLevel.filter((f) => f.is_dir);
     let allTopFolders = topLevel.filter((f) => f.is_dir);
     const parentWrapper = overviewContainer.closest(".w-\\[50\\%\\]");
-    createSearchBar(parentWrapper, (term) => {
+    const folderControls = document.getElementById("folder-controls");
+    createSearchBar(folderControls, (term) => {
       const filtered = term ? allTopFolders.filter((f) => f.name.toLowerCase().includes(term)) : allTopFolders;
       renderFolderButtons(filtered, overviewContainer);
     });
     renderFolderButtons(allTopFolders, overviewContainer);
-    if (foldersOnly.length > 0) {
-      const bar = document.createElement("div");
-      bar.className = "flex flex-nowrap gap-2 mb-4  pb-1 ";
-      foldersOnly.forEach((folder) => {
-        const wrapper = document.createElement("div");
-        wrapper.className = "flex items-center gap-1";
-        const eyeBtn = document.createElement("button");
-        eyeBtn.type = "button";
-        eyeBtn.title = folder.name;
-        eyeBtn.className = "flex items-center gap-1.5 px-2.5 py-1 bg-white rounded border text-xs font-medium text-slate-700 hover:bg-slate-50 max-w-[180px]";
-        const eyeIcon = document.createElement("span");
-        eyeIcon.textContent = "\u{1F441}\uFE0F";
-        eyeIcon.setAttribute("aria-hidden", "true");
-        const nameSpan = document.createElement("span");
-        nameSpan.textContent = folder.name;
-        nameSpan.className = "truncate";
-        eyeBtn.appendChild(eyeIcon);
-        eyeBtn.appendChild(nameSpan);
-        eyeBtn.addEventListener("click", () => {
-          const details = document.querySelector(
-            `details[data-path="${CSS.escape(folder.path)}"]`
-          );
-          if (details) {
-            details.open = !details.open;
-            eyeIcon.textContent = details.open ? "\u{1F441}\uFE0F" : "\u{1F648}";
-          }
-        });
-        const subBtn = document.createElement("button");
-        subBtn.className = "ml-1 w-6 h-6 flex items-center justify-center text-xs text-slate-500 hover:bg-slate-200 rounded";
-        subBtn.textContent = "\u25BC";
-        subBtn.title = "View subfolders";
-        subBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          showSubfolderModal(folder, renderNode);
-        });
-        wrapper.appendChild(eyeBtn);
-        wrapper.appendChild(subBtn);
-        bar.appendChild(wrapper);
-      });
-      overviewContainer.appendChild(bar);
-    }
+    initializeCodeTree({
+      rootPath: rootNode.path,
+      treeContainer: document.getElementById("tree"),
+      parentSection: document.querySelector("main > section")
+    });
   } catch (err) {
     console.error(err);
     document.getElementById("tree").textContent = "Failed to load directory tree";

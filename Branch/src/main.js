@@ -1,18 +1,36 @@
 // main.js
 
-import { showSubfolderModal } from "./modal.js";
+import { showSubfolderModal } from "./assets/components/modal.js";
 import { createSearchBar } from "./assets/components/search.js";
-
+import { initializeCodeTree } from "./assets/components/codeTree.js";
 const { invoke } = window.__TAURI__.core;
 
 let rootNode = null;
 
 /**
  * Render a directory tree node lazily
- */
+ **/
 function renderNode(node) {
   const li = document.createElement("li");
   li.className = "ml-4";
+
+  // Create container for checkbox + name
+  const itemContainer = document.createElement("div");
+  itemContainer.className = "flex items-center gap-1.5";
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.dataset.path = node.path;
+  checkbox.className = "mt-0.5 h-4 w-4";
+
+  const nameLabel = document.createElement("span");
+  nameLabel.textContent = node.name;
+  nameLabel.className = node.is_dir
+    ? "cursor-pointer font-medium text-slate-800 hover:text-blue-600"
+    : "text-slate-600";
+
+  itemContainer.appendChild(checkbox);
+  itemContainer.appendChild(nameLabel);
 
   if (node.is_dir) {
     const details = document.createElement("details");
@@ -20,16 +38,16 @@ function renderNode(node) {
     details.dataset.loaded = "false";
 
     const summary = document.createElement("summary");
-    summary.textContent = node.name;
-    summary.className =
-      "cursor-pointer font-medium text-slate-800 hover:text-blue-600";
+    summary.className = "list-none cursor-pointer"; // hide default marker
+    summary.appendChild(itemContainer); // put checkbox+name inside summary
 
     const ul = document.createElement("ul");
-    ul.className = "border-l border-slate-300 ml-2 pl-2";
+    ul.className = "border-l border-slate-300 ml-2 pl-2 mt-1";
 
     details.appendChild(summary);
     details.appendChild(ul);
     li.appendChild(details);
+
 
     details.addEventListener("toggle", async () => {
       if (!details.open) return;
@@ -65,7 +83,7 @@ function renderNode(node) {
       }
     });
   } else {
-    li.textContent = node.name;
+    li.replaceChildren(itemContainer);
     li.className =
       "ml-6 text-slate-600 hover:text-slate-900 cursor-default";
     li.dataset.path = node.path;
@@ -74,7 +92,6 @@ function renderNode(node) {
   return li;
 }
 
-// Add this AFTER renderNode(), BEFORE loadTree()
 function renderFolderButtons(folders, container) {
   container.innerHTML = ""; // clears only the buttons
 
@@ -82,49 +99,58 @@ function renderFolderButtons(folders, container) {
   bar.className = "flex flex-nowrap gap-2 mb-4  pb-1 ";
 
   folders.forEach(folder => {
-    const wrapper = document.createElement("div");
-    wrapper.className = "flex items-center gap-1";
+  // 👇 NEW: Unified button group
+  const buttonGroup = document.createElement("div");
+  buttonGroup.className = "flex items-center bg-white border border-slate-300 rounded-md overflow-hidden hover:bg-slate-50";
 
-    const eyeBtn = document.createElement("button");
-    eyeBtn.type = "button";
-    eyeBtn.className =
-      "flex items-center gap-1.5 px-2.5 py-1 bg-white rounded border text-xs font-medium text-slate-700 hover:bg-slate-50 max-w-[180px]";
+  // Eye button
+  const eyeBtn = document.createElement("button");
+  eyeBtn.type = "button";
+  eyeBtn.className = "flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-slate-700";
+  eyeBtn.title = "Toggle folder visibility";
 
-    const eyeIcon = document.createElement("span");
-    eyeIcon.textContent = "👁️";
-    eyeIcon.setAttribute("aria-hidden", "true");
+  const eyeIcon = document.createElement("span");
+  eyeIcon.textContent ="🙈";
+  eyeIcon.setAttribute("aria-hidden", "true");
 
-    const nameSpan = document.createElement("span");
-    nameSpan.textContent = folder.name;
-    nameSpan.className = "truncate";
+  const nameSpan = document.createElement("span");
+  nameSpan.textContent = folder.name;
+  nameSpan.className = "truncate max-w-[140px]"; // slightly narrower to fit group
 
-    eyeBtn.appendChild(eyeIcon);
-    eyeBtn.appendChild(nameSpan);
+  eyeBtn.appendChild(eyeIcon);
+  eyeBtn.appendChild(nameSpan);
 
-    eyeBtn.addEventListener("click", () => {
-      const details = document.querySelector(
-        `details[data-path="${CSS.escape(folder.path)}"]`
-      );
-      if (details) {
-        details.open = !details.open;
-        eyeIcon.textContent = details.open ? "👁️" : "🙈";
-      }
-    });
-
-    const subBtn = document.createElement("button");
-    subBtn.className =
-      "ml-1 w-6 h-6 flex items-center justify-center text-xs text-slate-500 hover:bg-slate-200 rounded";
-    subBtn.textContent = "▼";
-    subBtn.title = "View subfolders";
-    subBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      showSubfolderModal(folder, renderNode);
-    });
-
-    wrapper.appendChild(eyeBtn);
-    wrapper.appendChild(subBtn);
-    bar.appendChild(wrapper);
+  eyeBtn.addEventListener("click", () => {
+    const details = document.querySelector(
+      `details[data-path="${CSS.escape(folder.path)}"]`
+    );
+    if (details) {
+      details.open = !details.open;
+      eyeIcon.textContent = details.open ? "👁️" : "🙈";
+    }
   });
+
+  // Subfolder button
+  const subBtn = document.createElement("button");
+  subBtn.className = "w-7 flex items-center justify-center text-xs text-slate-500 hover:bg-slate-200";
+  subBtn.textContent = "▼";
+  subBtn.title = "View subfolders";
+  subBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    showSubfolderModal(folder, renderNode);
+  });
+
+  // Assemble group
+  buttonGroup.appendChild(eyeBtn);
+  buttonGroup.appendChild(subBtn);
+
+  // Wrap in outer flex item (for spacing)
+  const wrapper = document.createElement("div");
+  wrapper.className = "flex-shrink-0"; // prevents shrinking in scroll
+  wrapper.appendChild(buttonGroup);
+
+  bar.appendChild(wrapper);
+});
 
   container.appendChild(bar);
 }
@@ -163,72 +189,24 @@ let allTopFolders = topLevel.filter(f => f.is_dir);
 const parentWrapper = overviewContainer.closest('.w-\\[50\\%\\]');
 
 // Inject search bar + handle search
-createSearchBar(parentWrapper, (term) => {
-  // Filter logic
+// In main.js → loadTree()
+const folderControls = document.getElementById("folder-controls");
+
+// Inject search into #folder-controls
+createSearchBar(folderControls, (term) => {
   const filtered = term
     ? allTopFolders.filter(f => f.name.toLowerCase().includes(term))
     : allTopFolders;
-
-  // Re-render buttons
   renderFolderButtons(filtered, overviewContainer);
 });
-
 // Initial render
 renderFolderButtons(allTopFolders, overviewContainer);
 
-    if (foldersOnly.length > 0) {
-      const bar = document.createElement("div");
-      bar.className = "flex flex-nowrap gap-2 mb-4  pb-1 ";
-
-      foldersOnly.forEach(folder => {
-        const wrapper = document.createElement("div");
-        wrapper.className = "flex items-center gap-1";
-
-        const eyeBtn = document.createElement("button");
-        eyeBtn.type = "button";
-        eyeBtn.title = folder.name; // ← native tooltip on hover
-        eyeBtn.className =
-          "flex items-center gap-1.5 px-2.5 py-1 bg-white rounded border text-xs font-medium text-slate-700 hover:bg-slate-50 max-w-[180px]";
-
-        const eyeIcon = document.createElement("span");
-        eyeIcon.textContent = "👁️";
-        eyeIcon.setAttribute("aria-hidden", "true");
-
-        const nameSpan = document.createElement("span");
-        nameSpan.textContent = folder.name;
-        nameSpan.className = "truncate"; // ← Tailwind class
-
-        eyeBtn.appendChild(eyeIcon);
-        eyeBtn.appendChild(nameSpan);
-
-        eyeBtn.addEventListener("click", () => {
-          const details = document.querySelector(
-            `details[data-path="${CSS.escape(folder.path)}"]`
-          );
-          if (details) {
-            details.open = !details.open;
-            eyeIcon.textContent = details.open ? "👁️" : "🙈";
-          }
-        });
-
-        const subBtn = document.createElement("button");
-        subBtn.className =
-          "ml-1 w-6 h-6 flex items-center justify-center text-xs text-slate-500 hover:bg-slate-200 rounded";
-        subBtn.textContent = "▼";
-        subBtn.title = "View subfolders";
-
-        subBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          showSubfolderModal(folder, renderNode);
-        });
-
-        wrapper.appendChild(eyeBtn);
-        wrapper.appendChild(subBtn);
-        bar.appendChild(wrapper);
-      });
-
-      overviewContainer.appendChild(bar);
-    }
+initializeCodeTree({
+    rootPath: rootNode.path,
+    treeContainer: document.getElementById("tree"),
+    parentSection: document.querySelector("main > section")
+  });
   } catch (err) {
     console.error(err);
     document.getElementById("tree").textContent =
