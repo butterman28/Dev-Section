@@ -1,0 +1,88 @@
+name: 🚀 Build Docx_generator Cross-Platform
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # -----------------------------------------
+      # IMPORTANT: Set working directory!
+      # -----------------------------------------
+      - name: 📦 Install Dependencies
+        working-directory: Docx_template_generator
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: 🛠️ Build Executable
+        working-directory: Docx_template_generator
+        shell: bash
+        run: |
+          pyinstaller --onefile --windowed \
+            --hidden-import docx \
+            --hidden-import pandas \
+            --hidden-import openpyxl \
+            --name DOCX_Generator \
+            docx_input.py
+
+      - name: 📁 Package for Distribution
+        working-directory: Docx_template_generator
+        shell: bash
+        run: |
+          mkdir -p release
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            cp dist/DOCX_Generator.exe release/docx-generator.exe
+            7z a release/DOCX_Generator_Win64.zip release/docx-generator.exe template.docx README.md
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            APP="release/DOCX Generator.app"
+            mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+            cp dist/DOCX_Generator "$APP/Contents/MacOS/"
+            printf '%s\n' \
+              '<?xml version="1.0" encoding="UTF-8"?>' \
+              '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+              '<plist version="1.0"><dict>' \
+              '  <key>CFBundleExecutable</key><string>DOCX_Generator</string>' \
+              '  <key>CFBundleName</key><string>DOCX Generator</string>' \
+              '  <key>CFBundlePackageType</key><string>APPL</string>' \
+              '  <key>CFBundleShortVersionString</key><string>1.0</string>' \
+              '</dict></plist>' \
+              > "$APP/Contents/Info.plist"
+            zip -r release/DOCX_Generator_macOS.zip "$APP" template.docx README.md
+          else
+            cp dist/DOCX_Generator release/docx-generator
+            chmod +x release/docx-generator
+            tar -czf release/DOCX_Generator_Linux.tar.gz -C release docx-generator
+          fi
+
+      - name: 📤 Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: DOCX_Generator-${{ matrix.os }}
+          path: Docx_template_generator/release/
+          retention-days: 7
+
+      - name: 🚀 Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Docx_template_generator/release/*
+          token: ${{ secrets.GITHUB_TOKEN }}

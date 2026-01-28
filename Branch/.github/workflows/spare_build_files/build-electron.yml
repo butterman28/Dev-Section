@@ -1,0 +1,55 @@
+name: Build Electron Executables
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+      fail-fast: false
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🧹 Clean workspace
+        run: |
+          rm -rf filemovers/dist || true
+          rm -rf filemovers/node_modules || true
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: filemovers/package-lock.json
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+        working-directory: filemovers
+
+      - name: 🔨 Build Executables
+        run: npm run dist
+        working-directory: filemovers
+
+      - name: 📤 Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Konva_Explorer_${{ matrix.os }}
+          path: filemovers/dist/
+          retention-days: 7
+
+      - name: 🚀 Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: filemovers/dist/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+          draft: true

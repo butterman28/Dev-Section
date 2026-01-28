@@ -60,7 +60,7 @@ function createCodeTreePanel() {
   const panel = document.createElement('div');
   panel.className = 'w-1/2 flex flex-col';
   panel.innerHTML = `
-  <h3 class="font-bold text-slate-800 mb-2">Selected Code Tree</h3>
+  <h3 class="font-bold text-slate-800 mb-2">Selected Code Preview</h3>
   <div id="code-tree-content" class="flex-1 overflow-auto bg-slate-100 p-3 rounded shadow-sm ">
     <p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>
   </div>
