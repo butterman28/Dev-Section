@@ -235,6 +235,36 @@ function syncCheckboxes() {
     if (cb) cb.checked = true;
   });
 }
+function buildUnixTree(paths, root) {
+  if (paths.length === 0) return "";
+  const rootName = root.split(/[\\/]/).filter((part) => part).pop() || "project";
+  const relPaths = paths.map((p) => p.replace(root, "").replace(/^[\\/]/, "")).filter((p) => p).sort();
+  const tree = { [rootName]: {} };
+  for (const relPath of relPaths) {
+    const parts = relPath.split(/[\\/]/);
+    let current = tree[rootName];
+    for (const part of parts) {
+      if (!current[part]) current[part] = {};
+      current = current[part];
+    }
+  }
+  function render(node, prefix = "", isRoot = true) {
+    const keys = Object.keys(node).sort();
+    let output = "";
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const isLast = i === keys.length - 1;
+      const linePrefix = prefix + (isRoot ? "" : isLast ? "\u2514\u2500\u2500 " : "\u251C\u2500\u2500 ");
+      output += linePrefix + key + "\n";
+      if (Object.keys(node[key]).length > 0) {
+        const childPrefix = prefix + (isLast ? "    " : "\u2502   ");
+        output += render(node[key], childPrefix, false);
+      }
+    }
+    return output;
+  }
+  return render(tree, "", true).trimEnd();
+}
 async function updateCodeTreePreview() {
   const container = document.getElementById("code-tree-content");
   if (!container) return;
@@ -253,20 +283,25 @@ async function updateCodeTreePreview() {
   addButton.textContent = "Add Prompt";
   addButton.className = "px-2 py-1 text-xs bg-blue-600 text-white rounded w-fit";
   addButton.addEventListener("click", () => {
-    currentPrompt = promptInput.value.trim();
-    updateCodeTreePreview();
+    const newPrompt = promptInput.value.trim();
+    if (newPrompt) {
+      currentPrompt = currentPrompt ? `${newPrompt}
+${currentPrompt}` : newPrompt;
+      promptInput.value = "";
+      updateCodeTreePreview();
+    }
   });
   const inputRow = document.createElement("div");
   inputRow.className = "flex gap-2 items-center";
   inputRow.appendChild(promptInput);
   inputRow.appendChild(addButton);
   const previewContainer = document.createElement("div");
-  previewContainer.className = "relative flex-1";
+  previewContainer.className = "relative flex-1 min-h-0";
   const copyButton = document.createElement("button");
   copyButton.className = "absolute top-1 right-1 z-10 px-1.5 py-0.5 text-xs bg-gray-800 text-white rounded opacity-80 hover:opacity-100";
   copyButton.textContent = "Copy";
   copyButton.addEventListener("click", async () => {
-    const textToCopy = contentPre.textContent;
+    const textToCopy = contentTextarea.value;
     try {
       await navigator.clipboard.writeText(textToCopy);
       copyButton.textContent = "Copied!";
@@ -277,10 +312,11 @@ async function updateCodeTreePreview() {
       setTimeout(() => copyButton.textContent = "Copy", 2e3);
     }
   });
-  const contentPre = document.createElement("pre");
-  contentPre.className = "font-mono text-sm whitespace-pre overflow-auto flex-1 bg-white p-2 rounded";
-  contentPre.textContent = "Loading content\u2026";
-  previewContainer.appendChild(contentPre);
+  const contentTextarea = document.createElement("textarea");
+  contentTextarea.className = `font-mono text-sm whitespace-pre w-full h-full p-2 rounded border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none`;
+  contentTextarea.value = "Loading content\u2026";
+  contentTextarea.spellcheck = false;
+  previewContainer.appendChild(contentTextarea);
   previewContainer.appendChild(copyButton);
   wrapper.appendChild(inputRow);
   wrapper.appendChild(previewContainer);
@@ -295,6 +331,12 @@ async function updateCodeTreePreview() {
 `;
   }
   const sortedPaths = Array.from(selectedPaths).sort();
+  const treeText = buildUnixTree(sortedPaths, rootPath);
+  if (treeText) {
+    previewContent += `${treeText}
+
+`;
+  }
   for (const fullPath of sortedPaths) {
     try {
       const stats = await invoke3("get_file_stats", { path: fullPath });
@@ -313,7 +355,11 @@ ${content}
     }
   }
   previewContent = previewContent.trimEnd();
-  contentPre.textContent = previewContent;
+  const scrollTop = contentTextarea.scrollTop;
+  const scrollLeft = contentTextarea.scrollLeft;
+  contentTextarea.value = previewContent;
+  contentTextarea.scrollTop = scrollTop;
+  contentTextarea.scrollLeft = scrollLeft;
 }
 async function copyAs(format) {
   try {

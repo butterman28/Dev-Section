@@ -127,6 +127,50 @@ function syncCheckboxes() {
   });
 }
 
+function buildUnixTree(paths, root) {
+  if (paths.length === 0) return '';
+
+  // Extract root folder name (e.g. "/Users/you/my-project" → "my-project")
+  const rootName = root.split(/[\\/]/).filter(part => part).pop() || 'project';
+
+  // Normalize paths to be relative to root
+  const relPaths = paths
+    .map(p => p.replace(root, '').replace(/^[\\/]/, ''))
+    .filter(p => p)
+    .sort();
+
+  // Build nested object starting from rootName
+  const tree = { [rootName]: {} };
+
+  for (const relPath of relPaths) {
+    const parts = relPath.split(/[\\/]/);
+    let current = tree[rootName];
+    for (const part of parts) {
+      if (!current[part]) current[part] = {};
+      current = current[part];
+    }
+  }
+
+  // Render recursively
+  function render(node, prefix = '', isRoot = true) {
+    const keys = Object.keys(node).sort();
+    let output = '';
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const isLast = i === keys.length - 1;
+      const linePrefix = prefix + (isRoot ? '' : isLast ? '└── ' : '├── ');
+      output += linePrefix + key + '\n';
+      if (Object.keys(node[key]).length > 0) {
+        const childPrefix = prefix + (isLast ? '    ' : '│   ');
+        output += render(node[key], childPrefix, false);
+      }
+    }
+    return output;
+  }
+
+  return render(tree, '', true).trimEnd();
+}
+
 async function updateCodeTreePreview() {
   const container = document.getElementById('code-tree-content');
   if (!container) return;
@@ -148,13 +192,17 @@ async function updateCodeTreePreview() {
   promptInput.className = 'px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-blue-500';
 
   // Add Prompt button
-  const addButton = document.createElement('button');
-  addButton.textContent = 'Add Prompt';
-  addButton.className = 'px-2 py-1 text-xs bg-blue-600 text-white rounded w-fit';
-  addButton.addEventListener('click', () => {
-    currentPrompt = promptInput.value.trim();
-    updateCodeTreePreview(); // re-render with prompt embedded
-  });
+const addButton = document.createElement('button');
+addButton.textContent = 'Add Prompt';
+addButton.className = 'px-2 py-1 text-xs bg-blue-600 text-white rounded w-fit';
+addButton.addEventListener('click', () => {
+  const newPrompt = promptInput.value.trim();
+  if (newPrompt) {
+    currentPrompt = currentPrompt ? `${newPrompt}\n${currentPrompt}` : newPrompt;
+    promptInput.value = ''; // clear input
+    updateCodeTreePreview();
+  }
+});
 
   // Input + Button row
   const inputRow = document.createElement('div');
@@ -165,14 +213,14 @@ async function updateCodeTreePreview() {
   // Preview area
   // Preview area container (relative for absolute positioning)
 const previewContainer = document.createElement('div');
-previewContainer.className = 'relative flex-1';
+previewContainer.className = 'relative flex-1 min-h-0';
 
 // Copy button (top-left, above pre)
 const copyButton = document.createElement('button');
 copyButton.className = 'absolute top-1 right-1 z-10 px-1.5 py-0.5 text-xs bg-gray-800 text-white rounded opacity-80 hover:opacity-100';
 copyButton.textContent = 'Copy';
 copyButton.addEventListener('click', async () => {
-  const textToCopy = contentPre.textContent;
+  const textToCopy = contentTextarea.value;
   try {
     await navigator.clipboard.writeText(textToCopy);
     copyButton.textContent = 'Copied!';
@@ -185,43 +233,62 @@ copyButton.addEventListener('click', async () => {
 });
 
 // Actual preview content
-const contentPre = document.createElement('pre');
-contentPre.className = 'font-mono text-sm whitespace-pre overflow-auto flex-1 bg-white p-2 rounded';
-contentPre.textContent = 'Loading content…';
-
-previewContainer.appendChild(contentPre);
+// Editable preview area
+// Editable preview area
+const contentTextarea = document.createElement('textarea');
+contentTextarea.className = `font-mono text-sm whitespace-pre w-full h-full p-2 rounded border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none`;
+contentTextarea.value = 'Loading content…';
+contentTextarea.spellcheck = false;
+previewContainer.appendChild(contentTextarea);
 previewContainer.appendChild(copyButton);
 
   wrapper.appendChild(inputRow);
+  //wrapper.appendChild(treePre);     
   wrapper.appendChild(previewContainer);
   container.innerHTML = '';
   container.appendChild(wrapper);
 
   // Load file content
-  const { invoke } = window.__TAURI__.core;
-  let previewContent = '';
+const { invoke } = window.__TAURI__.core;
+let previewContent = '';
 
-  if (currentPrompt) {
-    previewContent += `${currentPrompt}\n---\n\n`;
+if (currentPrompt) {
+  previewContent += `${currentPrompt}\n---\n\n`;
+}
+
+// 👇 Add Unix tree right after prompt
+const sortedPaths = Array.from(selectedPaths).sort();
+const treeText = buildUnixTree(sortedPaths, rootPath);
+if (treeText) {
+  previewContent += `${treeText}\n\n`;
+}
+
+// Then add file contents
+for (const fullPath of sortedPaths) {
+  try {
+    const stats = await invoke('get_file_stats', { path: fullPath });
+    if (stats.is_dir) continue;
+    const content = await invoke('read_file', { path: fullPath });
+    const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
+    previewContent += `# ${relPath}\n${content}\n\n`;
+  } catch (err) {
+    const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
+    previewContent += `# ${relPath} [ERROR: ${String(err)}]\n\n`;
   }
+}
 
-  const sortedPaths = Array.from(selectedPaths).sort();
-  for (const fullPath of sortedPaths) {
-    try {
-      const stats = await invoke('get_file_stats', { path: fullPath });
-      if (stats.is_dir) continue;
-
-      const content = await invoke('read_file', { path: fullPath });
-      const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
-      previewContent += `# ${relPath}\n${content}\n\n`;
-    } catch (err) {
-      const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
-      previewContent += `# ${relPath} [ERROR: ${String(err)}]\n\n`;
-    }
-  }
 
   previewContent = previewContent.trimEnd();
-  contentPre.textContent = previewContent;
+  // Before updating content
+const scrollTop = contentTextarea.scrollTop;
+const scrollLeft = contentTextarea.scrollLeft;
+
+// ... update content ...
+contentTextarea.value = previewContent;
+
+// Restore scroll
+contentTextarea.scrollTop = scrollTop;
+contentTextarea.scrollLeft = scrollLeft;
 }
 
 // Placeholder — you can integrate with your existing modal system
