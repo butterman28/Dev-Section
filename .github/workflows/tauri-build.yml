@@ -6,6 +6,10 @@ on:
       - "v*.*.*"
   workflow_dispatch:
 
+defaults:
+  run:
+    working-directory: Branch
+
 jobs:
   build:
     permissions:
@@ -17,15 +21,15 @@ jobs:
           - platform: ubuntu-latest
             args: ''
             suffix: 'linux'
-            binary_path: 'src-tauri/target/release/branch'
+            binary_path: 'Branch/src-tauri/target/release/branch'
           - platform: macos-latest
             args: '--target universal-apple-darwin'
             suffix: 'macos'
-            binary_path: 'src-tauri/target/release/branch'
+            binary_path: 'Branch/src-tauri/target/release/branch'
           - platform: windows-latest
             args: ''
             suffix: 'windows'
-            binary_path: 'src-tauri/target/release/branch.exe'
+            binary_path: 'Branch/src-tauri/target/release/branch.exe'
 
     runs-on: ${{ matrix.settings.platform }}
 
@@ -38,6 +42,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          cache-dependency-path: Branch/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -59,6 +64,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          projectPath: Branch
           tagName: ${{ github.ref_name }}
           releaseName: "Branch v${{ github.ref_name }}"
           args: ${{ matrix.settings.args }}
