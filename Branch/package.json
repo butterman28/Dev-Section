@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "npm-run-all --parallel tailwind:watch esbuild:watch tauri:dev",
     "tauri:dev": "tauri dev",
+    "tauri": "tauri",
     "build": "npm-run-all tailwind:build esbuild:build tauri:build",
     "tauri:build": "tauri build",
     "tailwind:watch": "tailwindcss -i ./src/input.css -o ./src/output.css --watch",
