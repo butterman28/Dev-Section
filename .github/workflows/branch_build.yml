@@ -1,4 +1,4 @@
-name: Build Branch (CLI)
+name: Build Branch (GUI binary)
 
 on:
   push:
@@ -32,7 +32,20 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Build CLI binary
+      # 🔑 REQUIRED for Linux GUI builds
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            pkg-config \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Build Branch GUI binary
         working-directory: Branch/src-tauri
         run: cargo build --release --target ${{ matrix.target }}
 
