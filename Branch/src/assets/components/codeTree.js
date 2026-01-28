@@ -1,5 +1,8 @@
 // ./assets/features/codeTree.js
+import { showSnackbar } from "./snackbar.js";
+//import clipboard from "tauri-plugin-clipboard-api";
 
+//import clipboard from 
 let selectedPaths = new Set();
 let rootPath = '';
 let codeTreePanel = null;
@@ -62,18 +65,15 @@ function createCodeTreePanel() {
     <p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>
   </div>
   <div class="mt-2 flex gap-2 flex-wrap">
-    <button id="export-md" class="px-2 py-1 text-xs bg-blue-600 text-white rounded">Markdown</button>
-    <button id="export-js" class="px-2 py-1 text-xs bg-green-600 text-white rounded">JavaScript</button>
-    <button id="export-txt" class="px-2 py-1 text-xs bg-gray-700 text-white rounded">Text</button>
+    <button id="copy-md" class="px-2 py-1 text-xs bg-blue-600 text-white rounded">Copy as MD</button>
+    <button id="copy-json" class="px-2 py-1 text-xs bg-purple-600 text-white rounded">Copy as JSON</button>
+    <button id="copy-txt" class="px-2 py-1 text-xs bg-gray-700 text-white rounded">Copy as Text</button>
     <button id="clear-all" class="px-2 py-1 text-xs bg-red-600 text-white rounded">Clear All</button>
   </div>
 `;
-
-  // Attach export handlers
-  panel.querySelector('#export-md').addEventListener('click', () => exportAs('md'));
-  panel.querySelector('#export-js').addEventListener('click', () => exportAs('js'));
-  panel.querySelector('#export-txt').addEventListener('click', () => exportAs('txt'));
-
+  panel.querySelector('#copy-md').addEventListener('click', () => copyAs('md'));
+  panel.querySelector('#copy-json').addEventListener('click', () => copyAs('json'));
+  panel.querySelector('#copy-txt').addEventListener('click', () => copyAs('txt'));
   panel.querySelector('#clear-all').addEventListener('click', () => {
   selectedPaths.clear();
   syncCheckboxes();
@@ -163,12 +163,37 @@ async function updateCodeTreePreview() {
   inputRow.appendChild(addButton);
 
   // Preview area
-  const contentPre = document.createElement('pre');
-  contentPre.className = 'font-mono text-sm whitespace-pre overflow-auto flex-1 bg-white p-2 rounded';
-  contentPre.textContent = 'Loading content…';
+  // Preview area container (relative for absolute positioning)
+const previewContainer = document.createElement('div');
+previewContainer.className = 'relative flex-1';
+
+// Copy button (top-left, above pre)
+const copyButton = document.createElement('button');
+copyButton.className = 'absolute top-1 right-1 z-10 px-1.5 py-0.5 text-xs bg-gray-800 text-white rounded opacity-80 hover:opacity-100';
+copyButton.textContent = 'Copy';
+copyButton.addEventListener('click', async () => {
+  const textToCopy = contentPre.textContent;
+  try {
+    await navigator.clipboard.writeText(textToCopy);
+    copyButton.textContent = 'Copied!';
+    setTimeout(() => copyButton.textContent = 'Copy', 2000);
+  } catch (err) {
+    console.error('Failed to copy:', err);
+    copyButton.textContent = 'Failed!';
+    setTimeout(() => copyButton.textContent = 'Copy', 2000);
+  }
+});
+
+// Actual preview content
+const contentPre = document.createElement('pre');
+contentPre.className = 'font-mono text-sm whitespace-pre overflow-auto flex-1 bg-white p-2 rounded';
+contentPre.textContent = 'Loading content…';
+
+previewContainer.appendChild(contentPre);
+previewContainer.appendChild(copyButton);
 
   wrapper.appendChild(inputRow);
-  wrapper.appendChild(contentPre);
+  wrapper.appendChild(previewContainer);
   container.innerHTML = '';
   container.appendChild(wrapper);
 
@@ -205,42 +230,62 @@ function showPromptModal(path) {
 }
 
 async function exportAs(format) {
-  const { save } = window.__TAURI__.dialog;
-  const { writeTextFile } = window.__TAURI__.fs;
+  try {
+    const { save } = window.__TAURI__.dialog;
+    const { writeTextFile } = window.__TAURI__.fs;
 
-  let output = '';
+    let output = '';
 
-  if (currentPrompt) {
-    output += `${currentPrompt}\n---\n\n`;
-  }
-
-  const { invoke } = window.__TAURI__.core;
-  const sortedPaths = Array.from(selectedPaths).sort();
-  for (const fullPath of sortedPaths) {
-    try {
-      const stats = await invoke('get_file_stats', { path: fullPath });
-      if (stats.is_dir) continue;
-
-      const content = await invoke('read_file', { path: fullPath });
-      const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
-      output += `# ${relPath}\n${content}\n\n`;
-    } catch (err) {
-      const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
-      output += `# ${relPath} [ERROR: ${String(err)}]\n\n`;
+    if (currentPrompt) {
+      output += `${currentPrompt}\n---\n\n`;
     }
-  }
 
-  output = output.trimEnd() + '\n';
+    const { invoke } = window.__TAURI__.core;
+    const sortedPaths = Array.from(selectedPaths).sort();
+    for (const fullPath of sortedPaths) {
+      try {
+        const stats = await invoke('get_file_stats', { path: fullPath });
+        if (stats.is_dir) continue;
 
-  const filePath = await save({
-    filters: [{ name: "Plain Text", extensions: ["txt"] }],
-    defaultPath: `code-context.txt`
-  });
+        const content = await invoke('read_file', { path: fullPath });
+        const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
+        output += `# ${relPath}\n${content}\n\n`;
+      } catch (err) {
+        const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
+        output += `# ${relPath} [ERROR: ${String(err)}]\n\n`;
+      }
+    }
 
-  if (filePath) {
-    await writeTextFile(filePath, output);
+    output = output.trimEnd() + '\n';
+
+    const formatConfig = {
+      md: { ext: 'md', name: 'Markdown' },
+      js: { ext: 'js', name: 'JavaScript' },
+      txt: { ext: 'txt', name: 'Plain Text' }
+    };
+
+    const config = formatConfig[format] || formatConfig.txt;
+    const defaultPath = `code-context.${config.ext}`;
+
+    const filePath = await save({
+      filters: [{ name: config.name, extensions: [config.ext] }],
+      defaultPath: defaultPath
+    });
+
+    if (filePath) {
+      await writeTextFile(filePath, output);
+      showSnackbar(`Exported as ${config.name}!`, { type: 'success' });
+    } else {
+      // User canceled save dialog
+      showSnackbar('Export canceled.', { type: 'info', duration: 2000 });
+    }
+  } catch (err) {
+    console.error('Export failed:', err);
+    showSnackbar('Export failed! See console.', { type: 'error' });
   }
 }
+
+
 function buildSelectedTree() {
   const tree = {
     name: rootPath.split(/[\\/]/).pop() || 'root',
@@ -308,4 +353,69 @@ export function createPromptBar(container, onSearch) {
   });
 
   return input;
+}
+
+async function copyAs(format) {
+  try {
+    // Generate base content: prompt + files
+    let output = '';
+    if (currentPrompt) {
+      output += `${currentPrompt}\n---\n\n`;
+    }
+
+    const { invoke } = window.__TAURI__.core;
+    const sortedPaths = Array.from(selectedPaths).sort();
+
+    // Collect file data
+    const files = [];
+    for (const fullPath of sortedPaths) {
+      try {
+        const stats = await invoke('get_file_stats', { path: fullPath });
+        if (stats.is_dir) continue;
+        const content = await invoke('read_file', { path: fullPath });
+        const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
+        files.push({ path: relPath, content });
+      } catch (err) {
+        const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
+        files.push({ path: relPath, content: `[ERROR: ${String(err)}]` });
+      }
+    }
+
+    // Format based on `format`
+    let finalText = '';
+    switch (format) {
+      case 'txt':
+      case 'md':
+        // Same as before: # path\ncontent\n\n
+        for (const file of files) {
+          output += `# ${file.path}\n${file.content}\n\n`;
+        }
+        finalText = output.trimEnd();
+        break;
+
+      case 'json':
+        finalText = JSON.stringify(
+          {
+            prompt: currentPrompt || null,
+            files: files
+          },
+          null,
+          2
+        );
+        break;
+
+      default:
+        throw new Error(`Unsupported format: ${format}`);
+    }
+    // Copy to clipboard
+    
+// This bypasses the need for the 'window.__TAURI__.clipboard' helper
+await invoke('plugin:clipboard|write_text', { text: finalText});
+    //await writeText(finalText);
+    const formatName = { txt: 'Text', md: 'Markdown', json: 'JSON' }[format];
+    showSnackbar(`Copied as ${formatName}!`, { type: 'success' });
+  } catch (err) {
+    console.error('Copy failed:', err);
+    showSnackbar('Copy failed! See console.', { type: 'error' });
+  }
 }

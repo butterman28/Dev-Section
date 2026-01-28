@@ -1,5 +1,4 @@
 // main.js
-
 import { showSubfolderModal } from "./assets/components/modal.js";
 import { createSearchBar } from "./assets/components/search.js";
 import { initializeCodeTree } from "./assets/components/codeTree.js";

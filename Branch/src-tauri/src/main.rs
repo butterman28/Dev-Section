@@ -4,6 +4,8 @@ use tree::{build_tree, TreeNode,IGNORED_DIRS};
 use std::fs;
 use std::path::PathBuf;
 use serde::Serialize;
+//use tauri_plugin_clipboard::ClipboardPlugin;
+
 
 #[derive(Serialize)]
 pub struct FileStat {
@@ -101,6 +103,9 @@ fn get_children_for_path(path: String) -> Result<Vec<TreeNode>, String> {
 
 fn main() {
     tauri::Builder::default()
+    .plugin(tauri_plugin_fs::init())
+    .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_clipboard::init()) 
         .invoke_handler(tauri::generate_handler![
             get_tree_for_path,
             get_launch_dir,

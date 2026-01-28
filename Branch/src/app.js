@@ -80,6 +80,38 @@ function createSearchBar(container, onSearch) {
   return input;
 }
 
+// src/assets/components/snackbar.js
+var snackbarContainer = null;
+function createSnackbarContainer() {
+  if (snackbarContainer) return snackbarContainer;
+  snackbarContainer = document.createElement("div");
+  snackbarContainer.className = "fixed bottom-4 left-1/2 transform -translate-x-1/2 z-[1000]";
+  document.body.appendChild(snackbarContainer);
+  return snackbarContainer;
+}
+function showSnackbar(message, { duration = 3e3, type = "success" } = {}) {
+  const container = createSnackbarContainer();
+  const snackbar = document.createElement("div");
+  snackbar.className = `
+    px-4 py-2 rounded-lg shadow-lg text-white font-medium text-sm
+    ${type === "success" ? "bg-green-600" : "bg-red-600"}
+    opacity-0 transition-opacity duration-200
+  `;
+  snackbar.textContent = message;
+  container.appendChild(snackbar);
+  setTimeout(() => snackbar.classList.remove("opacity-0"), 10);
+  setTimeout(() => {
+    snackbar.classList.add("opacity-0");
+    setTimeout(() => {
+      snackbar.remove();
+      if (container.children.length === 0) {
+        container.remove();
+        snackbarContainer = null;
+      }
+    }, 200);
+  }, duration);
+}
+
 // src/assets/components/codeTree.js
 var selectedPaths = /* @__PURE__ */ new Set();
 var rootPath = "";
@@ -156,15 +188,15 @@ function createCodeTreePanel() {
     <p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>
   </div>
   <div class="mt-2 flex gap-2 flex-wrap">
-    <button id="export-md" class="px-2 py-1 text-xs bg-blue-600 text-white rounded">Markdown</button>
-    <button id="export-js" class="px-2 py-1 text-xs bg-green-600 text-white rounded">JavaScript</button>
-    <button id="export-txt" class="px-2 py-1 text-xs bg-gray-700 text-white rounded">Text</button>
+    <button id="copy-md" class="px-2 py-1 text-xs bg-blue-600 text-white rounded">Copy as MD</button>
+    <button id="copy-json" class="px-2 py-1 text-xs bg-purple-600 text-white rounded">Copy as JSON</button>
+    <button id="copy-txt" class="px-2 py-1 text-xs bg-gray-700 text-white rounded">Copy as Text</button>
     <button id="clear-all" class="px-2 py-1 text-xs bg-red-600 text-white rounded">Clear All</button>
   </div>
 `;
-  panel.querySelector("#export-md").addEventListener("click", () => exportAs("md"));
-  panel.querySelector("#export-js").addEventListener("click", () => exportAs("js"));
-  panel.querySelector("#export-txt").addEventListener("click", () => exportAs("txt"));
+  panel.querySelector("#copy-md").addEventListener("click", () => copyAs("md"));
+  panel.querySelector("#copy-json").addEventListener("click", () => copyAs("json"));
+  panel.querySelector("#copy-txt").addEventListener("click", () => copyAs("txt"));
   panel.querySelector("#clear-all").addEventListener("click", () => {
     selectedPaths.clear();
     syncCheckboxes();
@@ -228,11 +260,30 @@ async function updateCodeTreePreview() {
   inputRow.className = "flex gap-2 items-center";
   inputRow.appendChild(promptInput);
   inputRow.appendChild(addButton);
+  const previewContainer = document.createElement("div");
+  previewContainer.className = "relative flex-1";
+  const copyButton = document.createElement("button");
+  copyButton.className = "absolute top-1 right-1 z-10 px-1.5 py-0.5 text-xs bg-gray-800 text-white rounded opacity-80 hover:opacity-100";
+  copyButton.textContent = "Copy";
+  copyButton.addEventListener("click", async () => {
+    const textToCopy = contentPre.textContent;
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      copyButton.textContent = "Copied!";
+      setTimeout(() => copyButton.textContent = "Copy", 2e3);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+      copyButton.textContent = "Failed!";
+      setTimeout(() => copyButton.textContent = "Copy", 2e3);
+    }
+  });
   const contentPre = document.createElement("pre");
   contentPre.className = "font-mono text-sm whitespace-pre overflow-auto flex-1 bg-white p-2 rounded";
   contentPre.textContent = "Loading content\u2026";
+  previewContainer.appendChild(contentPre);
+  previewContainer.appendChild(copyButton);
   wrapper.appendChild(inputRow);
-  wrapper.appendChild(contentPre);
+  wrapper.appendChild(previewContainer);
   container.innerHTML = "";
   container.appendChild(wrapper);
   const { invoke: invoke3 } = window.__TAURI__.core;
@@ -264,42 +315,61 @@ ${content}
   previewContent = previewContent.trimEnd();
   contentPre.textContent = previewContent;
 }
-async function exportAs(format) {
-  const { save } = window.__TAURI__.dialog;
-  const { writeTextFile } = window.__TAURI__.fs;
-  let output = "";
-  if (currentPrompt) {
-    output += `${currentPrompt}
+async function copyAs(format) {
+  try {
+    let output = "";
+    if (currentPrompt) {
+      output += `${currentPrompt}
 ---
 
 `;
-  }
-  const { invoke: invoke3 } = window.__TAURI__.core;
-  const sortedPaths = Array.from(selectedPaths).sort();
-  for (const fullPath of sortedPaths) {
-    try {
-      const stats = await invoke3("get_file_stats", { path: fullPath });
-      if (stats.is_dir) continue;
-      const content = await invoke3("read_file", { path: fullPath });
-      const relPath = fullPath.replace(rootPath, "").replace(/^[\\/]/, "");
-      output += `# ${relPath}
-${content}
-
-`;
-    } catch (err) {
-      const relPath = fullPath.replace(rootPath, "").replace(/^[\\/]/, "");
-      output += `# ${relPath} [ERROR: ${String(err)}]
-
-`;
     }
-  }
-  output = output.trimEnd() + "\n";
-  const filePath = await save({
-    filters: [{ name: "Plain Text", extensions: ["txt"] }],
-    defaultPath: `code-context.txt`
-  });
-  if (filePath) {
-    await writeTextFile(filePath, output);
+    const { invoke: invoke3 } = window.__TAURI__.core;
+    const sortedPaths = Array.from(selectedPaths).sort();
+    const files = [];
+    for (const fullPath of sortedPaths) {
+      try {
+        const stats = await invoke3("get_file_stats", { path: fullPath });
+        if (stats.is_dir) continue;
+        const content = await invoke3("read_file", { path: fullPath });
+        const relPath = fullPath.replace(rootPath, "").replace(/^[\\/]/, "");
+        files.push({ path: relPath, content });
+      } catch (err) {
+        const relPath = fullPath.replace(rootPath, "").replace(/^[\\/]/, "");
+        files.push({ path: relPath, content: `[ERROR: ${String(err)}]` });
+      }
+    }
+    let finalText = "";
+    switch (format) {
+      case "txt":
+      case "md":
+        for (const file of files) {
+          output += `# ${file.path}
+${file.content}
+
+`;
+        }
+        finalText = output.trimEnd();
+        break;
+      case "json":
+        finalText = JSON.stringify(
+          {
+            prompt: currentPrompt || null,
+            files
+          },
+          null,
+          2
+        );
+        break;
+      default:
+        throw new Error(`Unsupported format: ${format}`);
+    }
+    await invoke3("plugin:clipboard|write_text", { text: finalText });
+    const formatName = { txt: "Text", md: "Markdown", json: "JSON" }[format];
+    showSnackbar(`Copied as ${formatName}!`, { type: "success" });
+  } catch (err) {
+    console.error("Copy failed:", err);
+    showSnackbar("Copy failed! See console.", { type: "error" });
   }
 }
 
