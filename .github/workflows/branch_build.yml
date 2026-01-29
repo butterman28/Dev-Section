@@ -16,23 +16,28 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            out: branch-linux-x86_64
 
           - os: macos-latest
             target: x86_64-apple-darwin
+            out: branch-macos-x86_64
 
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            out: branch-windows-x86_64.exe
 
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      # 🔑 REQUIRED for Linux GUI builds
+      # 🔑 REQUIRED for Linux GUI builds (glib / gtk / webkit)
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -49,8 +54,91 @@ jobs:
         working-directory: Branch/src-tauri
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Rename binary for release
+        shell: bash
+        run: |
+          BIN_DIR="Branch/src-tauri/target/${{ matrix.target }}/release"
+
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            mv "$BIN_DIR/branch.exe" "$BIN_DIR/${{ matrix.out }}"
+          else
+            mv "$BIN_DIR/branch" "$BIN_DIR/${{ matrix.out }}"
+          fi
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            Branch/src-tauri/target/${{ matrix.target }}/release/branch*
+            Branch/src-tauri/target/${{ matrix.target }}/release/${{ matrix.out }}
+name: Build Branch (GUI binary)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            out: branch-linux-x86_64
+
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            out: branch-macos-x86_64
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            out: branch-windows-x86_64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # 🔑 REQUIRED for Linux GUI builds (glib / gtk / webkit)
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            pkg-config \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Build Branch GUI binary
+        working-directory: Branch/src-tauri
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename binary for release
+        shell: bash
+        run: |
+          BIN_DIR="Branch/src-tauri/target/${{ matrix.target }}/release"
+
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            mv "$BIN_DIR/branch.exe" "$BIN_DIR/${{ matrix.out }}"
+          else
+            mv "$BIN_DIR/branch" "$BIN_DIR/${{ matrix.out }}"
+          fi
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Branch/src-tauri/target/${{ matrix.target }}/release/${{ matrix.out }}
