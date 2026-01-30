@@ -4,7 +4,73 @@ use tree::{build_tree, TreeNode,IGNORED_DIRS};
 use std::fs;
 use std::path::PathBuf;
 use serde::Serialize;
-//use tauri_plugin_clipboard::ClipboardPlugin;
+use walkdir::WalkDir;
+
+#[derive(Serialize)]
+struct FileContent {
+    path: String,
+    content: String,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn read_multiple_files(paths: Vec<String>) -> Result<Vec<FileContent>, String> {
+    let mut results = Vec::new();
+    
+    for path in paths {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => results.push(FileContent {
+                path: path.clone(),
+                content,
+                error: None,
+            }),
+            Err(e) => results.push(FileContent {
+                path: path.clone(),
+                content: String::new(),
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+    
+    Ok(results)
+}
+
+#[tauri::command]
+fn get_all_files_in_directory(path: String) -> Result<Vec<String>, String> {
+    let path = std::path::PathBuf::from(&path);
+    
+    if !path.exists() || !path.is_dir() {
+        return Err("Directory does not exist".to_string());
+    }
+
+    let mut files = Vec::new();
+    
+    // Native Rust file traversal - extremely fast
+    for entry in WalkDir::new(&path)
+        .follow_links(false)
+        .max_depth(10)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        // Skip ignored directories
+        let entry_path = entry.path();
+        if let Some(parent) = entry_path.parent() {
+            if let Some(dir_name) = parent.file_name() {
+                if tree::IGNORED_DIRS.contains(&dir_name.to_string_lossy().as_ref()) {
+                    continue;
+                }
+            }
+        }
+        
+        if let Some(path_str) = entry_path.to_str() {
+            files.push(path_str.to_string());
+        }
+    }
+
+    Ok(files)
+}
+
 
 
 #[derive(Serialize)]
@@ -99,7 +165,41 @@ fn get_children_for_path(path: String) -> Result<Vec<TreeNode>, String> {
 
     Ok(children)
 }
+#[tauri::command]
+fn get_all_paths_in_directory(path: String) -> Result<Vec<String>, String> {
+    let path = std::path::PathBuf::from(&path);
+    
+    if !path.exists() || !path.is_dir() {
+        return Err("Directory does not exist".to_string());
+    }
 
+    let mut paths = Vec::new();
+    
+    // WalkDir - includes BOTH files and directories
+    for entry in WalkDir::new(&path)
+        .follow_links(false)
+        .max_depth(10)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let entry_path = entry.path();
+        
+        // Skip ignored directories
+        if let Some(parent) = entry_path.parent() {
+            if let Some(dir_name) = parent.file_name() {
+                if tree::IGNORED_DIRS.contains(&dir_name.to_string_lossy().as_ref()) {
+                    continue;
+                }
+            }
+        }
+        
+        if let Some(path_str) = entry_path.to_str() {
+            paths.push(path_str.to_string());
+        }
+    }
+
+    Ok(paths)
+}
 
 fn main() {
     tauri::Builder::default()
@@ -112,6 +212,9 @@ fn main() {
             get_children_for_path,
             read_file,
             get_file_stats,
+            get_all_files_in_directory,
+            get_all_paths_in_directory,
+            read_multiple_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running Branch");

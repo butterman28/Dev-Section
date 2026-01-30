@@ -1,6 +1,40 @@
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
+use walkdir::WalkDir; // Add at top of file
+
+pub fn get_all_files_in_directory(path: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    
+    if !path.exists() || !path.is_dir() {
+        return files;
+    }
+
+    // WalkDir is extremely fast - native Rust performance
+    for entry in WalkDir::new(path)
+        .follow_links(false)
+        .max_depth(10) // Prevent infinite loops
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        // Skip ignored directories
+        let entry_path = entry.path();
+        if let Some(parent) = entry_path.parent() {
+            if let Some(dir_name) = parent.file_name() {
+                if IGNORED_DIRS.contains(&dir_name.to_string_lossy().as_ref()) {
+                    continue;
+                }
+            }
+        }
+        
+        if let Some(path_str) = entry_path.to_str() {
+            files.push(path_str.to_string());
+        }
+    }
+
+    files
+}
 
 pub const IGNORED_DIRS: &[&str] = &[".git", "target", "node_modules"];
 

@@ -82,22 +82,28 @@ function createCodeTreePanel() {
 
   return panel;
 }
-
 async function handleCheckboxChange(e) {
   if (!e.target.matches('input[type="checkbox"]')) return;
 
   const path = e.target.dataset.path;
   const isChecked = e.target.checked;
 
-  // Determine if this path is a directory by checking for <details>
+  // Determine if this path is a directory
   const isDir = !!document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
 
   if (isDir) {
-    const scriptPaths = await collectScriptFiles(path);
+    // ✅ Get ALL paths (folders + files) not just script files
+    const allPaths = await invoke("get_all_paths_in_directory", {
+      path: path
+    });
+    
+    // Include the folder itself
+    allPaths.push(path);
+    
     if (isChecked) {
-      scriptPaths.forEach(p => selectedPaths.add(p));
+      allPaths.forEach(p => selectedPaths.add(p));
     } else {
-      scriptPaths.forEach(p => selectedPaths.delete(p));
+      allPaths.forEach(p => selectedPaths.delete(p));
     }
   } else {
     // It's a file
@@ -108,13 +114,11 @@ async function handleCheckboxChange(e) {
     }
   }
 
-  // Sync all checkboxes in the tree to match actual selection
   syncCheckboxes();
-
   updateCodeTreePreview();
 }
 
-function syncCheckboxes() {
+export function syncCheckboxes() {
   // Reset all checkboxes
   document.querySelectorAll('#tree input[type="checkbox"]').forEach(cb => {
     cb.checked = false;
@@ -192,17 +196,17 @@ async function updateCodeTreePreview() {
   promptInput.className = 'px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-blue-500';
 
   // Add Prompt button
-const addButton = document.createElement('button');
-addButton.textContent = 'Add Prompt';
-addButton.className = 'px-2 py-1 text-xs bg-blue-600 text-white rounded w-fit';
-addButton.addEventListener('click', () => {
-  const newPrompt = promptInput.value.trim();
-  if (newPrompt) {
-    currentPrompt = currentPrompt ? `${newPrompt}\n${currentPrompt}` : newPrompt;
-    promptInput.value = ''; // clear input
-    updateCodeTreePreview();
-  }
-});
+  const addButton = document.createElement('button');
+  addButton.textContent = 'Add Prompt';
+  addButton.className = 'px-2 py-1 text-xs bg-blue-600 text-white rounded w-fit';
+  addButton.addEventListener('click', () => {
+    const newPrompt = promptInput.value.trim();
+    if (newPrompt) {
+      currentPrompt = currentPrompt ? `${newPrompt}\n${currentPrompt}` : newPrompt;
+      promptInput.value = '';
+      updateCodeTreePreview();
+    }
+  });
 
   // Input + Button row
   const inputRow = document.createElement('div');
@@ -210,190 +214,101 @@ addButton.addEventListener('click', () => {
   inputRow.appendChild(promptInput);
   inputRow.appendChild(addButton);
 
-  // Preview area
-  // Preview area container (relative for absolute positioning)
-const previewContainer = document.createElement('div');
-previewContainer.className = 'relative flex-1 min-h-0';
+  // Preview area container
+  const previewContainer = document.createElement('div');
+  previewContainer.className = 'relative flex-1 min-h-0';
 
-// Copy button (top-left, above pre)
-const copyButton = document.createElement('button');
-copyButton.className = 'absolute top-1 right-1 z-10 px-1.5 py-0.5 text-xs bg-gray-800 text-white rounded opacity-80 hover:opacity-100';
-copyButton.textContent = 'Copy';
-copyButton.addEventListener('click', async () => {
-  const textToCopy = contentTextarea.value;
-  try {
-    await navigator.clipboard.writeText(textToCopy);
-    copyButton.textContent = 'Copied!';
-    setTimeout(() => copyButton.textContent = 'Copy', 2000);
-  } catch (err) {
-    console.error('Failed to copy:', err);
-    copyButton.textContent = 'Failed!';
-    setTimeout(() => copyButton.textContent = 'Copy', 2000);
-  }
-});
+  // Copy button
+  const copyButton = document.createElement('button');
+  copyButton.className = 'absolute top-1 right-1 z-10 px-1.5 py-0.5 text-xs bg-gray-800 text-white rounded opacity-80 hover:opacity-100';
+  copyButton.textContent = 'Copy';
+  copyButton.addEventListener('click', async () => {
+    const textToCopy = contentTextarea.value;
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      copyButton.textContent = 'Copied!';
+      setTimeout(() => copyButton.textContent = 'Copy', 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      copyButton.textContent = 'Failed!';
+      setTimeout(() => copyButton.textContent = 'Copy', 2000);
+    }
+  });
 
-// Actual preview content
-// Editable preview area
-// Editable preview area
-const contentTextarea = document.createElement('textarea');
-contentTextarea.className = `font-mono text-sm whitespace-pre w-full h-full p-2 rounded border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none`;
-contentTextarea.value = 'Loading content…';
-contentTextarea.spellcheck = false;
-previewContainer.appendChild(contentTextarea);
-previewContainer.appendChild(copyButton);
+  // Editable preview area
+  const contentTextarea = document.createElement('textarea');
+  contentTextarea.className = `font-mono text-sm whitespace-pre w-full h-full p-2 rounded border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none`;
+  contentTextarea.value = 'Loading content…';
+  contentTextarea.spellcheck = false;
+  
+  previewContainer.appendChild(contentTextarea);
+  previewContainer.appendChild(copyButton);
 
   wrapper.appendChild(inputRow);
-  //wrapper.appendChild(treePre);     
   wrapper.appendChild(previewContainer);
+  
   container.innerHTML = '';
   container.appendChild(wrapper);
 
-  // Load file content
-const { invoke } = window.__TAURI__.core;
-let previewContent = '';
+  // ✅ OPTIMIZED: Build preview content
+  const { invoke } = window.__TAURI__.core;
+  let previewContent = '';
 
-if (currentPrompt) {
-  previewContent += `${currentPrompt}\n---\n\n`;
-}
-
-// 👇 Add Unix tree right after prompt
-const sortedPaths = Array.from(selectedPaths).sort();
-const treeText = buildUnixTree(sortedPaths, rootPath);
-if (treeText) {
-  previewContent += `${treeText}\n\n`;
-}
-
-// Then add file contents
-for (const fullPath of sortedPaths) {
-  try {
-    const stats = await invoke('get_file_stats', { path: fullPath });
-    if (stats.is_dir) continue;
-    const content = await invoke('read_file', { path: fullPath });
-    const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
-    previewContent += `# ${relPath}\n${content}\n\n`;
-  } catch (err) {
-    const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
-    previewContent += `# ${relPath} [ERROR: ${String(err)}]\n\n`;
+  if (currentPrompt) {
+    previewContent += `${currentPrompt}\n---\n\n`;
   }
-}
 
+  // Build Unix tree
+  const sortedPaths = Array.from(selectedPaths).sort();
+  const treeText = buildUnixTree(sortedPaths, rootPath);
+  if (treeText) {
+    previewContent += `${treeText}\n\n`;
+  }
 
-  previewContent = previewContent.trimEnd();
-  // Before updating content
-const scrollTop = contentTextarea.scrollTop;
-const scrollLeft = contentTextarea.scrollLeft;
+  // ✅ CRITICAL OPTIMIZATION: Filter out directories FIRST
+  // We need to check which paths are files vs directories
+  const filePaths = [];
+  const dirPaths = [];
+  
+  for (const path of sortedPaths) {
+    const isDir = !!document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
+    if (isDir) {
+      dirPaths.push(path);
+    } else {
+      filePaths.push(path);
+    }
+  }
 
-// ... update content ...
-contentTextarea.value = previewContent;
-
-// Restore scroll
-contentTextarea.scrollTop = scrollTop;
-contentTextarea.scrollLeft = scrollLeft;
-}
-
-// Placeholder — you can integrate with your existing modal system
-function showPromptModal(path) {
-  alert(`Prompt for: ${path}\n(You can replace this with your unified modal)`);
-}
-
-async function exportAs(format) {
+  // ✅ BATCH READ ALL FILES AT ONCE (single Rust call)
   try {
-    const { save } = window.__TAURI__.dialog;
-    const { writeTextFile } = window.__TAURI__.fs;
-
-    let output = '';
-
-    if (currentPrompt) {
-      output += `${currentPrompt}\n---\n\n`;
-    }
-
-    const { invoke } = window.__TAURI__.core;
-    const sortedPaths = Array.from(selectedPaths).sort();
-    for (const fullPath of sortedPaths) {
-      try {
-        const stats = await invoke('get_file_stats', { path: fullPath });
-        if (stats.is_dir) continue;
-
-        const content = await invoke('read_file', { path: fullPath });
-        const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
-        output += `# ${relPath}\n${content}\n\n`;
-      } catch (err) {
-        const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
-        output += `# ${relPath} [ERROR: ${String(err)}]\n\n`;
-      }
-    }
-
-    output = output.trimEnd() + '\n';
-
-    const formatConfig = {
-      md: { ext: 'md', name: 'Markdown' },
-      js: { ext: 'js', name: 'JavaScript' },
-      txt: { ext: 'txt', name: 'Plain Text' }
-    };
-
-    const config = formatConfig[format] || formatConfig.txt;
-    const defaultPath = `code-context.${config.ext}`;
-
-    const filePath = await save({
-      filters: [{ name: config.name, extensions: [config.ext] }],
-      defaultPath: defaultPath
+    const fileContents = await invoke('read_multiple_files', {
+      paths: filePaths
     });
 
-    if (filePath) {
-      await writeTextFile(filePath, output);
-      showSnackbar(`Exported as ${config.name}!`, { type: 'success' });
-    } else {
-      // User canceled save dialog
-      showSnackbar('Export canceled.', { type: 'info', duration: 2000 });
+    // Build content from batch results
+    for (const file of fileContents) {
+      const relPath = file.path.replace(rootPath, '').replace(/^[\\/]/, '');
+      if (file.error) {
+        previewContent += `# ${relPath} [ERROR: ${file.error}]\n\n`;
+      } else {
+        previewContent += `# ${relPath}\n${file.content}\n\n`;
+      }
     }
   } catch (err) {
-    console.error('Export failed:', err);
-    showSnackbar('Export failed! See console.', { type: 'error' });
-  }
-}
-
-
-function buildSelectedTree() {
-  const tree = {
-    name: rootPath.split(/[\\/]/).pop() || 'root',
-    path: rootPath,
-    children: {},
-    isDir: true
-  };
-
-  // Sort paths so parents are processed before children
-  const sortedPaths = Array.from(selectedPaths).sort();
-
-  for (const fullPath of sortedPaths) {
-    const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
-    if (!relPath) continue;
-
-    const parts = relPath.split(/[\\/]/);
-    let current = tree;
-
-    // Traverse/create intermediate folders
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      const isFile = i === parts.length - 1;
-      const key = parts.slice(0, i + 1).join('/');
-
-      if (!current.children[key]) {
-        current.children[key] = {
-          name: part,
-          path: rootPath + '/' + key,
-          children: isFile ? null : {},
-          isDir: !isFile,
-          isSelected: isFile // only files are "selected"
-        };
-      }
-
-      if (!isFile) {
-        current = current.children[key];
-      }
-    }
+    console.error('Failed to read files:', err);
+    previewContent += `\n[ERROR: Failed to load file contents]`;
   }
 
-  return tree;
+  previewContent = previewContent.trimEnd();
+  
+  // Restore scroll position
+  const scrollTop = contentTextarea.scrollTop;
+  const scrollLeft = contentTextarea.scrollLeft;
+  
+  contentTextarea.value = previewContent;
+  
+  contentTextarea.scrollTop = scrollTop;
+  contentTextarea.scrollLeft = scrollLeft;
 }
 
 export function createPromptBar(container, onSearch) {
@@ -424,36 +339,37 @@ export function createPromptBar(container, onSearch) {
 
 async function copyAs(format) {
   try {
-    // Generate base content: prompt + files
     let output = '';
     if (currentPrompt) {
       output += `${currentPrompt}\n---\n\n`;
     }
 
     const { invoke } = window.__TAURI__.core;
-    const sortedPaths = Array.from(selectedPaths).sort();
+    
+    // ✅ Filter out directories
+    const filePaths = Array.from(selectedPaths).filter(path => {
+      return !document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
+    });
+
+    // ✅ BATCH READ
+    const fileContents = await invoke('read_multiple_files', {
+      paths: filePaths
+    });
 
     // Collect file data
-    const files = [];
-    for (const fullPath of sortedPaths) {
-      try {
-        const stats = await invoke('get_file_stats', { path: fullPath });
-        if (stats.is_dir) continue;
-        const content = await invoke('read_file', { path: fullPath });
-        const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
-        files.push({ path: relPath, content });
-      } catch (err) {
-        const relPath = fullPath.replace(rootPath, '').replace(/^[\\/]/, '');
-        files.push({ path: relPath, content: `[ERROR: ${String(err)}]` });
-      }
-    }
+    const files = fileContents.map(file => {
+      const relPath = file.path.replace(rootPath, '').replace(/^[\\/]/, '');
+      return { 
+        path: relPath, 
+        content: file.error ? `[ERROR: ${file.error}]` : file.content 
+      };
+    });
 
     // Format based on `format`
     let finalText = '';
     switch (format) {
       case 'txt':
       case 'md':
-        // Same as before: # path\ncontent\n\n
         for (const file of files) {
           output += `# ${file.path}\n${file.content}\n\n`;
         }
@@ -474,11 +390,10 @@ async function copyAs(format) {
       default:
         throw new Error(`Unsupported format: ${format}`);
     }
-    // Copy to clipboard
     
-// This bypasses the need for the 'window.__TAURI__.clipboard' helper
-await invoke('plugin:clipboard|write_text', { text: finalText});
-    //await writeText(finalText);
+    // Copy to clipboard
+    await invoke('plugin:clipboard|write_text', { text: finalText });
+    
     const formatName = { txt: 'Text', md: 'Markdown', json: 'JSON' }[format];
     showSnackbar(`Copied as ${formatName}!`, { type: 'success' });
   } catch (err) {
@@ -486,3 +401,8 @@ await invoke('plugin:clipboard|write_text', { text: finalText});
     showSnackbar('Copy failed! See console.', { type: 'error' });
   }
 }
+export { 
+  updateCodeTreePreview, 
+  selectedPaths, 
+  syncCheckboxes as syncCodeTreeCheckboxes 
+};

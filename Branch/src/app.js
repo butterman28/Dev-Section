@@ -1,5 +1,5 @@
 // src/assets/components/modal.js
-var { invoke } = window.__TAURI__.core;
+var { invoke: invoke2 } = window.__TAURI__.core;
 var modalInitialized = false;
 var currentModal = null;
 function ensureModalExists() {
@@ -34,7 +34,7 @@ async function showSubfolderModal(folderNode, renderNodeFn) {
   nameEl.textContent = folderNode.name;
   treeEl.innerHTML = "Loading\u2026";
   try {
-    const children = await invoke("get_children_for_path", {
+    const children = await invoke2("get_children_for_path", {
       path: folderNode.path
     });
     treeEl.innerHTML = "";
@@ -117,62 +117,6 @@ var selectedPaths = /* @__PURE__ */ new Set();
 var rootPath = "";
 var codeTreePanel = null;
 var currentPrompt = "";
-var SCRIPT_EXTENSIONS = /* @__PURE__ */ new Set([
-  ".js",
-  ".ts",
-  ".jsx",
-  ".tsx",
-  ".mjs",
-  ".cjs",
-  ".py",
-  ".sh",
-  ".bash",
-  ".rb",
-  ".php",
-  ".pl",
-  ".go",
-  ".rs",
-  ".java",
-  ".cs",
-  ".swift",
-  ".kt",
-  ".lua",
-  ".r",
-  ".scala",
-  ".clj",
-  ".ex",
-  ".erl",
-  ".sql",
-  ".json",
-  ".yaml",
-  ".yml",
-  ".toml",
-  ".md"
-]);
-function isScriptFile(path) {
-  const dotIndex = path.lastIndexOf(".");
-  if (dotIndex === -1) return false;
-  const ext = path.slice(dotIndex).toLowerCase();
-  return SCRIPT_EXTENSIONS.has(ext);
-}
-async function collectScriptFiles(dirPath) {
-  const { invoke: invoke3 } = window.__TAURI__.core;
-  const scripts = [];
-  try {
-    const children = await invoke3("get_children_for_path", { path: dirPath });
-    for (const child of children) {
-      if (child.is_dir) {
-        const subScripts = await collectScriptFiles(child.path);
-        scripts.push(...subScripts);
-      } else if (isScriptFile(child.path)) {
-        scripts.push(child.path);
-      }
-    }
-  } catch (err) {
-    console.warn(`Failed to read directory: ${dirPath}`, err);
-  }
-  return scripts;
-}
 function initializeCodeTree({ rootPath: root, treeContainer, parentSection }) {
   rootPath = root.replace(/[\\/]+$/, "");
   codeTreePanel = createCodeTreePanel();
@@ -210,11 +154,14 @@ async function handleCheckboxChange(e) {
   const isChecked = e.target.checked;
   const isDir = !!document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
   if (isDir) {
-    const scriptPaths = await collectScriptFiles(path);
+    const allPaths = await invoke("get_all_paths_in_directory", {
+      path
+    });
+    allPaths.push(path);
     if (isChecked) {
-      scriptPaths.forEach((p) => selectedPaths.add(p));
+      allPaths.forEach((p) => selectedPaths.add(p));
     } else {
-      scriptPaths.forEach((p) => selectedPaths.delete(p));
+      allPaths.forEach((p) => selectedPaths.delete(p));
     }
   } else {
     if (isChecked) {
@@ -322,7 +269,7 @@ ${currentPrompt}` : newPrompt;
   wrapper.appendChild(previewContainer);
   container.innerHTML = "";
   container.appendChild(wrapper);
-  const { invoke: invoke3 } = window.__TAURI__.core;
+  const { invoke: invoke4 } = window.__TAURI__.core;
   let previewContent = "";
   if (currentPrompt) {
     previewContent += `${currentPrompt}
@@ -337,22 +284,37 @@ ${currentPrompt}` : newPrompt;
 
 `;
   }
-  for (const fullPath of sortedPaths) {
-    try {
-      const stats = await invoke3("get_file_stats", { path: fullPath });
-      if (stats.is_dir) continue;
-      const content = await invoke3("read_file", { path: fullPath });
-      const relPath = fullPath.replace(rootPath, "").replace(/^[\\/]/, "");
-      previewContent += `# ${relPath}
-${content}
-
-`;
-    } catch (err) {
-      const relPath = fullPath.replace(rootPath, "").replace(/^[\\/]/, "");
-      previewContent += `# ${relPath} [ERROR: ${String(err)}]
-
-`;
+  const filePaths = [];
+  const dirPaths = [];
+  for (const path of sortedPaths) {
+    const isDir = !!document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
+    if (isDir) {
+      dirPaths.push(path);
+    } else {
+      filePaths.push(path);
     }
+  }
+  try {
+    const fileContents = await invoke4("read_multiple_files", {
+      paths: filePaths
+    });
+    for (const file of fileContents) {
+      const relPath = file.path.replace(rootPath, "").replace(/^[\\/]/, "");
+      if (file.error) {
+        previewContent += `# ${relPath} [ERROR: ${file.error}]
+
+`;
+      } else {
+        previewContent += `# ${relPath}
+${file.content}
+
+`;
+      }
+    }
+  } catch (err) {
+    console.error("Failed to read files:", err);
+    previewContent += `
+[ERROR: Failed to load file contents]`;
   }
   previewContent = previewContent.trimEnd();
   const scrollTop = contentTextarea.scrollTop;
@@ -370,21 +332,20 @@ async function copyAs(format) {
 
 `;
     }
-    const { invoke: invoke3 } = window.__TAURI__.core;
-    const sortedPaths = Array.from(selectedPaths).sort();
-    const files = [];
-    for (const fullPath of sortedPaths) {
-      try {
-        const stats = await invoke3("get_file_stats", { path: fullPath });
-        if (stats.is_dir) continue;
-        const content = await invoke3("read_file", { path: fullPath });
-        const relPath = fullPath.replace(rootPath, "").replace(/^[\\/]/, "");
-        files.push({ path: relPath, content });
-      } catch (err) {
-        const relPath = fullPath.replace(rootPath, "").replace(/^[\\/]/, "");
-        files.push({ path: relPath, content: `[ERROR: ${String(err)}]` });
-      }
-    }
+    const { invoke: invoke4 } = window.__TAURI__.core;
+    const filePaths = Array.from(selectedPaths).filter((path) => {
+      return !document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
+    });
+    const fileContents = await invoke4("read_multiple_files", {
+      paths: filePaths
+    });
+    const files = fileContents.map((file) => {
+      const relPath = file.path.replace(rootPath, "").replace(/^[\\/]/, "");
+      return {
+        path: relPath,
+        content: file.error ? `[ERROR: ${file.error}]` : file.content
+      };
+    });
     let finalText = "";
     switch (format) {
       case "txt":
@@ -410,7 +371,7 @@ ${file.content}
       default:
         throw new Error(`Unsupported format: ${format}`);
     }
-    await invoke3("plugin:clipboard|write_text", { text: finalText });
+    await invoke4("plugin:clipboard|write_text", { text: finalText });
     const formatName = { txt: "Text", md: "Markdown", json: "JSON" }[format];
     showSnackbar(`Copied as ${formatName}!`, { type: "success" });
   } catch (err) {
@@ -420,8 +381,25 @@ ${file.content}
 }
 
 // src/main.js
-var { invoke: invoke2 } = window.__TAURI__.core;
+var { invoke: invoke3 } = window.__TAURI__.core;
 var rootNode = null;
+async function propagateFolderCheckbox(folderPath, checked) {
+  try {
+    const allPaths = await invoke3("get_all_paths_in_directory", {
+      path: folderPath
+    });
+    allPaths.push(folderPath);
+    if (checked) {
+      allPaths.forEach((p) => selectedPaths.add(p));
+    } else {
+      allPaths.forEach((p) => selectedPaths.delete(p));
+    }
+    syncCheckboxes();
+    updateCodeTreePreview();
+  } catch (err) {
+    console.error("Failed to propagate checkbox:", err);
+  }
+}
 function renderNode(node) {
   const li = document.createElement("li");
   li.className = "ml-4";
@@ -448,6 +426,10 @@ function renderNode(node) {
     details.appendChild(summary);
     details.appendChild(ul);
     li.appendChild(details);
+    checkbox.addEventListener("change", async (e) => {
+      e.stopPropagation();
+      await propagateFolderCheckbox(node.path, checkbox.checked);
+    });
     details.addEventListener("toggle", async () => {
       if (!details.open) return;
       if (details.dataset.loaded !== "false") return;
@@ -457,7 +439,7 @@ function renderNode(node) {
       loading.className = "ml-6 text-slate-400 italic";
       ul.appendChild(loading);
       try {
-        const children = await invoke2("get_children_for_path", {
+        const children = await invoke3("get_children_for_path", {
           path: node.path
         });
         ul.innerHTML = "";
@@ -466,6 +448,7 @@ function renderNode(node) {
           ul.appendChild(renderNode(child));
         }
         details.dataset.loaded = "true";
+        syncCheckboxes();
       } catch (err) {
         ul.innerHTML = "";
         const error = document.createElement("li");
@@ -485,7 +468,7 @@ function renderNode(node) {
 function renderFolderButtons(folders, container) {
   container.innerHTML = "";
   const bar = document.createElement("div");
-  bar.className = "flex flex-nowrap gap-2 mb-4  pb-1 ";
+  bar.className = "flex flex-nowrap gap-2 mb-4 pb-1";
   folders.forEach((folder) => {
     const buttonGroup = document.createElement("div");
     buttonGroup.className = "flex items-center bg-white border border-slate-300 rounded-md overflow-hidden hover:bg-slate-50";
@@ -529,24 +512,30 @@ function renderFolderButtons(folders, container) {
 }
 async function loadTree() {
   try {
-    const projectDir = await invoke2("get_launch_dir");
-    rootNode = await invoke2("get_tree_for_path", {
+    const projectDir = await invoke3("get_launch_dir");
+    rootNode = await invoke3("get_tree_for_path", {
       path: projectDir
     });
     const treeContainer = document.getElementById("tree");
     const overviewContainer = document.getElementById("folder-overview");
     treeContainer.innerHTML = "";
     overviewContainer.innerHTML = "";
+    selectedPaths.clear();
     const ul = document.createElement("ul");
     ul.className = "text-sm font-mono";
     ul.appendChild(renderNode(rootNode));
     treeContainer.appendChild(ul);
-    const topLevel = await invoke2("get_children_for_path", {
+    setTimeout(() => {
+      const rootDetails = treeContainer.querySelector("details[data-path]");
+      if (rootDetails) {
+        rootDetails.open = true;
+      }
+    }, 100);
+    const topLevel = await invoke3("get_children_for_path", {
       path: rootNode.path
     });
     const foldersOnly = topLevel.filter((f) => f.is_dir);
     let allTopFolders = topLevel.filter((f) => f.is_dir);
-    const parentWrapper = overviewContainer.closest(".w-\\[50\\%\\]");
     const folderControls = document.getElementById("folder-controls");
     createSearchBar(folderControls, (term) => {
       const filtered = term ? allTopFolders.filter((f) => f.name.toLowerCase().includes(term)) : allTopFolders;
