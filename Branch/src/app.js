@@ -1,5 +1,5 @@
 // src/assets/components/modal.js
-var { invoke: invoke2 } = window.__TAURI__.core;
+var { invoke } = window.__TAURI__.core;
 var modalInitialized = false;
 var currentModal = null;
 function ensureModalExists() {
@@ -34,7 +34,7 @@ async function showSubfolderModal(folderNode, renderNodeFn) {
   nameEl.textContent = folderNode.name;
   treeEl.innerHTML = "Loading\u2026";
   try {
-    const children = await invoke2("get_children_for_path", {
+    const children = await invoke("get_children_for_path", {
       path: folderNode.path
     });
     treeEl.innerHTML = "";
@@ -113,10 +113,84 @@ function showSnackbar(message, { duration = 3e3, type = "success" } = {}) {
 }
 
 // src/assets/components/codeTree.js
+var { invoke: invoke2 } = window.__TAURI__.core;
+var globalOverlay = null;
 var selectedPaths = /* @__PURE__ */ new Set();
 var rootPath = "";
 var codeTreePanel = null;
 var currentPrompt = "";
+var loadingStatus;
+var loadingText;
+var successStatus;
+var cancelBtn;
+var previewCancelled = false;
+var isPreviewLoading;
+var isDir;
+function ensureGlobalOverlay() {
+  if (globalOverlay) return;
+  globalOverlay = document.createElement("div");
+  globalOverlay.className = `
+    fixed inset-0 z-[9999]
+    flex items-center justify-center
+    bg-black/30 backdrop-blur-sm
+  `;
+  globalOverlay.style.display = "none";
+  globalOverlay.innerHTML = `
+    <div class="flex items-center gap-3 bg-white px-5 py-3 rounded shadow">
+      <svg class="animate-spin h-5 w-5 text-blue-600" viewBox="0 0 24 24" fill="none">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor"
+          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+      </svg>
+      <span class="text-sm text-slate-700" id="global-overlay-text">
+        Working\u2026
+      </span>
+    </div>
+  `;
+  document.body.appendChild(globalOverlay);
+}
+function showGlobalOverlay(text = "Working\u2026") {
+  ensureGlobalOverlay();
+  globalOverlay.querySelector("#global-overlay-text").textContent = text;
+  globalOverlay.style.display = "flex";
+}
+function hideGlobalOverlay() {
+  if (globalOverlay) {
+    globalOverlay.style.display = "none";
+  }
+}
+function lockUI() {
+  document.body.style.pointerEvents = "none";
+  document.body.style.cursor = "wait";
+}
+function unlockUI() {
+  document.body.style.pointerEvents = "";
+  document.body.style.cursor = "";
+}
+function showLoadingStatus(totalFiles = 0, loadedFiles = 0) {
+  if (!loadingStatus) return;
+  if (totalFiles > 0) {
+    loadingText.textContent = `Loading ${totalFiles} files... (${loadedFiles}/${totalFiles})`;
+  } else {
+    loadingText.textContent = "Loading files...";
+  }
+  loadingStatus.style.display = "flex";
+  successStatus.style.display = "none";
+  cancelBtn.style.display = "flex";
+}
+function hideLoadingStatus() {
+  if (!loadingStatus) return;
+  loadingStatus.style.display = "none";
+  cancelBtn.style.display = "none";
+}
+function showSuccessStatus() {
+  if (!successStatus) return;
+  hideLoadingStatus();
+  successStatus.style.display = "flex";
+  setTimeout(() => {
+    successStatus.style.display = "none";
+  }, 3e3);
+}
 function initializeCodeTree({ rootPath: root, treeContainer, parentSection }) {
   rootPath = root.replace(/[\\/]+$/, "");
   codeTreePanel = createCodeTreePanel();
@@ -131,37 +205,83 @@ function createCodeTreePanel() {
   <div id="code-tree-content" class="flex-1 overflow-auto bg-slate-100 p-3 rounded shadow-sm ">
     <p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>
   </div>
-  <div class="mt-2 flex gap-2 flex-wrap">
-    <button id="copy-md" class="px-2 py-1 text-xs bg-blue-600 text-white rounded">Copy as MD</button>
-    <button id="copy-json" class="px-2 py-1 text-xs bg-purple-600 text-white rounded">Copy as JSON</button>
-    <button id="copy-txt" class="px-2 py-1 text-xs bg-gray-700 text-white rounded">Copy as Text</button>
-    <button id="clear-all" class="px-2 py-1 text-xs bg-red-600 text-white rounded">Clear All</button>
+  <div class="mt-2 flex gap-2 flex-wrap items-center">
+    <!-- Loading Status with Spinner -->
+    <div id="loading-status" class="flex items-center gap-2 px-3 py-1 text-sm text-slate-600" style="display:none;">
+      <svg class="animate-spin h-4 w-4 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>
+      <span id="loading-text">Loading files...</span>
+    </div>
+    
+    <!-- Success Checkmark -->
+    <div id="success-status" class="flex items-center gap-2 px-3 py-1 text-sm text-green-600 bg-green-50 rounded" style="display:none;">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+      </svg>
+      <span>Ready!</span>
+    </div>
+    
+    <button id="cancel-load" class="px-3 py-1 text-xs bg-yellow-600 hover:bg-yellow-700 text-white rounded flex items-center gap-1.5 transition-all" style="display:none;">
+      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+      </svg>
+      Cancel
+    </button>
+    
+    <button id="copy-md" class="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition">Copy as MD</button>
+    <button id="copy-json" class="px-2 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded transition">Copy as JSON</button>
+    <button id="copy-txt" class="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-800 text-white rounded transition">Copy as Text</button>
+    <button id="clear-all" class="px-2 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition">Clear All</button>
   </div>
 `;
+  cancelBtn = panel.querySelector("#cancel-load");
+  loadingStatus = panel.querySelector("#loading-status");
+  loadingText = panel.querySelector("#loading-text");
+  successStatus = panel.querySelector("#success-status");
+  cancelBtn.addEventListener("click", () => {
+    previewCancelled = true;
+    hideLoadingStatus();
+    showSnackbar("Loading cancelled", { type: "info" });
+    selectedPaths.clear();
+  });
   panel.querySelector("#copy-md").addEventListener("click", () => copyAs("md"));
   panel.querySelector("#copy-json").addEventListener("click", () => copyAs("json"));
   panel.querySelector("#copy-txt").addEventListener("click", () => copyAs("txt"));
   panel.querySelector("#clear-all").addEventListener("click", () => {
     selectedPaths.clear();
-    syncCheckboxes();
+    if (!isDir) {
+      syncCheckboxes();
+    }
     updateCodeTreePreview();
   });
   return panel;
+}
+var previewRAF = null;
+function schedulePreviewUpdate() {
+  if (previewRAF) cancelAnimationFrame(previewRAF);
+  previewRAF = requestAnimationFrame(() => {
+    previewRAF = null;
+    updateCodeTreePreview();
+  });
 }
 async function handleCheckboxChange(e) {
   if (!e.target.matches('input[type="checkbox"]')) return;
   const path = e.target.dataset.path;
   const isChecked = e.target.checked;
-  const isDir = !!document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
+  isDir = !!document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
   if (isDir) {
-    const allPaths = await invoke("get_all_paths_in_directory", {
-      path
-    });
-    allPaths.push(path);
-    if (isChecked) {
-      allPaths.forEach((p) => selectedPaths.add(p));
-    } else {
-      allPaths.forEach((p) => selectedPaths.delete(p));
+    showGlobalOverlay("Scanning directory\u2026");
+    lockUI();
+    await new Promise(requestAnimationFrame);
+    try {
+      const allPaths = await invoke2("get_all_paths_in_directory", { path });
+      allPaths.push(path);
+      await applyPathsChunked(allPaths, isChecked);
+    } finally {
+      hideGlobalOverlay();
+      unlockUI();
     }
   } else {
     if (isChecked) {
@@ -170,8 +290,10 @@ async function handleCheckboxChange(e) {
       selectedPaths.delete(path);
     }
   }
-  syncCheckboxes();
-  updateCodeTreePreview();
+  if (!isDir) {
+    syncCheckboxes();
+  }
+  schedulePreviewUpdate();
 }
 function syncCheckboxes() {
   document.querySelectorAll('#tree input[type="checkbox"]').forEach((cb) => {
@@ -213,12 +335,14 @@ function buildUnixTree(paths, root) {
   return render(tree, "", true).trimEnd();
 }
 async function updateCodeTreePreview() {
+  previewCancelled = false;
   const container = document.getElementById("code-tree-content");
   if (!container) return;
   if (selectedPaths.size === 0) {
     container.innerHTML = '<p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>';
     return;
   }
+  isPreviewLoading = false;
   const wrapper = document.createElement("div");
   wrapper.className = "flex flex-col h-full gap-2";
   const promptInput = document.createElement("input");
@@ -245,7 +369,7 @@ ${currentPrompt}` : newPrompt;
   const previewContainer = document.createElement("div");
   previewContainer.className = "relative flex-1 min-h-0";
   const copyButton = document.createElement("button");
-  copyButton.className = "absolute top-1 right-1 z-10 px-1.5 py-0.5 text-xs bg-gray-800 text-white rounded opacity-80 hover:opacity-100";
+  copyButton.className = "absolute top-1 right-5 z-10 px-1.5 py-0.5 text-xs bg-gray-800 text-white rounded opacity-80 hover:opacity-100";
   copyButton.textContent = "Copy";
   copyButton.addEventListener("click", async () => {
     const textToCopy = contentTextarea.value;
@@ -261,7 +385,7 @@ ${currentPrompt}` : newPrompt;
   });
   const contentTextarea = document.createElement("textarea");
   contentTextarea.className = `font-mono text-sm whitespace-pre w-full h-full p-2 rounded border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none`;
-  contentTextarea.value = "Loading content\u2026";
+  contentTextarea.value = "Loading summary...";
   contentTextarea.spellcheck = false;
   previewContainer.appendChild(contentTextarea);
   previewContainer.appendChild(copyButton);
@@ -269,10 +393,9 @@ ${currentPrompt}` : newPrompt;
   wrapper.appendChild(previewContainer);
   container.innerHTML = "";
   container.appendChild(wrapper);
-  const { invoke: invoke4 } = window.__TAURI__.core;
-  let previewContent = "";
+  let baseContent = "";
   if (currentPrompt) {
-    previewContent += `${currentPrompt}
+    baseContent += `${currentPrompt}
 ---
 
 `;
@@ -280,48 +403,59 @@ ${currentPrompt}` : newPrompt;
   const sortedPaths = Array.from(selectedPaths).sort();
   const treeText = buildUnixTree(sortedPaths, rootPath);
   if (treeText) {
-    previewContent += `${treeText}
+    baseContent += `${treeText}
 
 `;
   }
-  const filePaths = [];
-  const dirPaths = [];
-  for (const path of sortedPaths) {
-    const isDir = !!document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
-    if (isDir) {
-      dirPaths.push(path);
-    } else {
-      filePaths.push(path);
-    }
-  }
-  try {
-    const fileContents = await invoke4("read_multiple_files", {
-      paths: filePaths
+  const filePaths = sortedPaths.filter((path) => {
+    return !document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
+  });
+  if (filePaths.length > 0) {
+    contentTextarea.value = `${baseContent}Loading ${filePaths.length} files... (0/${filePaths.length})`;
+    await loadPreviewBatch({
+      textarea: contentTextarea,
+      baseContent,
+      filePaths
     });
-    for (const file of fileContents) {
-      const relPath = file.path.replace(rootPath, "").replace(/^[\\/]/, "");
-      if (file.error) {
-        previewContent += `# ${relPath} [ERROR: ${file.error}]
-
-`;
-      } else {
-        previewContent += `# ${relPath}
-${file.content}
-
-`;
-      }
-    }
-  } catch (err) {
-    console.error("Failed to read files:", err);
-    previewContent += `
-[ERROR: Failed to load file contents]`;
+  } else {
+    contentTextarea.value = baseContent || "No files selected.";
+    hideLoadingStatus();
   }
-  previewContent = previewContent.trimEnd();
-  const scrollTop = contentTextarea.scrollTop;
-  const scrollLeft = contentTextarea.scrollLeft;
-  contentTextarea.value = previewContent;
-  contentTextarea.scrollTop = scrollTop;
-  contentTextarea.scrollLeft = scrollLeft;
+}
+async function loadPreviewBatch({
+  textarea,
+  baseContent,
+  filePaths
+}) {
+  await new Promise(requestAnimationFrame);
+  showLoadingStatus(filePaths.length, 0);
+  await new Promise(requestAnimationFrame);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const fileContents = await invoke2("read_multiple_files", {
+    paths: filePaths
+  });
+  let output = baseContent;
+  let loaded = 0;
+  for (const file of fileContents) {
+    if (previewCancelled) return;
+    loaded++;
+    const relPath = file.path.replace(rootPath, "").replace(/^[\\/]/, "");
+    output += `# ${relPath}
+`;
+    output += file.error ? `[ERROR: ${file.error}]
+
+` : `${file.content}
+
+`;
+    if (loaded % 20 === 0) {
+      showLoadingStatus(filePaths.length, loaded);
+      await new Promise(requestAnimationFrame);
+    }
+  }
+  textarea.value = output.trimEnd();
+  hideLoadingStatus();
+  showSuccessStatus();
+  hideGlobalOverlay();
 }
 async function copyAs(format) {
   try {
@@ -332,11 +466,10 @@ async function copyAs(format) {
 
 `;
     }
-    const { invoke: invoke4 } = window.__TAURI__.core;
     const filePaths = Array.from(selectedPaths).filter((path) => {
       return !document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
     });
-    const fileContents = await invoke4("read_multiple_files", {
+    const fileContents = await invoke2("read_multiple_files", {
       paths: filePaths
     });
     const files = fileContents.map((file) => {
@@ -371,7 +504,7 @@ ${file.content}
       default:
         throw new Error(`Unsupported format: ${format}`);
     }
-    await invoke4("plugin:clipboard|write_text", { text: finalText });
+    await invoke2("plugin:clipboard|write_text", { text: finalText });
     const formatName = { txt: "Text", md: "Markdown", json: "JSON" }[format];
     showSnackbar(`Copied as ${formatName}!`, { type: "success" });
   } catch (err) {

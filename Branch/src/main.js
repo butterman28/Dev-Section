@@ -11,11 +11,11 @@ const { invoke } = window.__TAURI__.core;
 let rootNode = null;
 
 /**
- * ✅ Propagate to ALL paths (folders + files) within directory
+ *  Propagate to ALL paths (folders + files) within directory
  */
 async function propagateFolderCheckbox(folderPath, checked) {
   try {
-    // ✅ Get ALL paths including subfolders (not just files)
+    //  Get ALL paths including subfolders (not just files)
     const allPaths = await invoke("get_all_paths_in_directory", {
       path: folderPath
     });
@@ -77,7 +77,7 @@ function renderNode(node) {
     details.appendChild(ul);
     li.appendChild(details);
 
-    // ✅ Folder checkbox click handler
+    //  Folder checkbox click handler
     checkbox.addEventListener('change', async (e) => {
       e.stopPropagation();
       await propagateFolderCheckbox(node.path, checkbox.checked);
@@ -108,7 +108,7 @@ function renderNode(node) {
 
         details.dataset.loaded = "true";
 
-        // ✅ Sync newly loaded nodes
+        //  Sync newly loaded nodes
         syncCodeTreeCheckboxes();
       } catch (err) {
         ul.innerHTML = "";

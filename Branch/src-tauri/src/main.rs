@@ -5,6 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use serde::Serialize;
 use walkdir::WalkDir;
+use rayon::prelude::*;
 
 #[derive(Serialize)]
 struct FileContent {
@@ -13,26 +14,57 @@ struct FileContent {
     error: Option<String>,
 }
 
+#[derive(Serialize)]
+struct FileInfo {
+    path: String,
+    size: u64,
+    is_dir: bool,
+}
+
 #[tauri::command]
-fn read_multiple_files(paths: Vec<String>) -> Result<Vec<FileContent>, String> {
+fn get_file_info(paths: Vec<String>) -> Result<Vec<FileInfo>, String> {
     let mut results = Vec::new();
     
     for path in paths {
-        match std::fs::read_to_string(&path) {
-            Ok(content) => results.push(FileContent {
+        match std::fs::metadata(&path) {
+            Ok(metadata) => results.push(FileInfo {
                 path: path.clone(),
-                content,
-                error: None,
+                size: metadata.len(),
+                is_dir: metadata.is_dir(),
             }),
-            Err(e) => results.push(FileContent {
-                path: path.clone(),
-                content: String::new(),
-                error: Some(e.to_string()),
-            }),
+            Err(_) => {
+                // Skip files that can't be read
+            }
         }
     }
     
     Ok(results)
+}
+
+// Keep read_multiple_files as is
+#[tauri::command]
+async fn read_multiple_files(paths: Vec<String>) -> Result<Vec<FileContent>, String> {
+    tokio::task::spawn_blocking(move || {
+        paths
+            .par_iter()
+            .map(|path| {
+                match std::fs::read_to_string(path) {
+                    Ok(content) => FileContent {
+                        path: path.clone(),
+                        content,
+                        error: None,
+                    },
+                    Err(e) => FileContent {
+                        path: path.clone(),
+                        content: String::new(),
+                        error: Some(e.to_string()),
+                    },
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -165,41 +197,45 @@ fn get_children_for_path(path: String) -> Result<Vec<TreeNode>, String> {
 
     Ok(children)
 }
-#[tauri::command]
-fn get_all_paths_in_directory(path: String) -> Result<Vec<String>, String> {
-    let path = std::path::PathBuf::from(&path);
-    
-    if !path.exists() || !path.is_dir() {
-        return Err("Directory does not exist".to_string());
-    }
 
-    let mut paths = Vec::new();
-    
-    // WalkDir - includes BOTH files and directories
-    for entry in WalkDir::new(&path)
-        .follow_links(false)
-        .max_depth(10)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let entry_path = entry.path();
-        
-        // Skip ignored directories
-        if let Some(parent) = entry_path.parent() {
-            if let Some(dir_name) = parent.file_name() {
-                if tree::IGNORED_DIRS.contains(&dir_name.to_string_lossy().as_ref()) {
-                    continue;
+#[tauri::command]
+async fn get_all_paths_in_directory(path: String) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = PathBuf::from(&path);
+
+        if !path.exists() || !path.is_dir() {
+            return Err("Directory does not exist".to_string());
+        }
+
+        let mut paths = Vec::new();
+
+        for entry in WalkDir::new(&path)
+            .follow_links(false)
+            .max_depth(10)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let entry_path = entry.path();
+
+            if let Some(parent) = entry_path.parent() {
+                if let Some(dir_name) = parent.file_name() {
+                    if IGNORED_DIRS.contains(&dir_name.to_string_lossy().as_ref()) {
+                        continue;
+                    }
                 }
             }
-        }
-        
-        if let Some(path_str) = entry_path.to_str() {
-            paths.push(path_str.to_string());
-        }
-    }
 
-    Ok(paths)
+            if let Some(path_str) = entry_path.to_str() {
+                paths.push(path_str.to_string());
+            }
+        }
+
+        Ok(paths)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
+
 
 fn main() {
     tauri::Builder::default()
@@ -214,7 +250,8 @@ fn main() {
             get_file_stats,
             get_all_files_in_directory,
             get_all_paths_in_directory,
-            read_multiple_files
+            read_multiple_files,
+            get_file_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running Branch");

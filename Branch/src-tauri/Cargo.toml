@@ -26,4 +26,6 @@ tauri-plugin-fs = "2.4.5"
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-clipboard = "2.1.11"
 walkdir = "2.5.0"
+rayon = "1.11.0"
+tokio = "1.49.0"
 

@@ -383,6 +383,7 @@ dependencies = [
 name = "branch"
 version = "0.1.0"
 dependencies = [
+ "rayon",
  "serde",
  "serde_json",
  "tauri",
@@ -391,6 +392,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
  "tauri-plugin-opener",
+ "tokio",
  "walkdir",
 ]
 
