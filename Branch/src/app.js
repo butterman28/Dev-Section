@@ -610,7 +610,7 @@ function renderFolderButtons(folders, container) {
     eyeBtn.className = "flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-slate-700";
     eyeBtn.title = "Toggle folder visibility";
     const eyeIcon = document.createElement("span");
-    eyeIcon.textContent = "\u{1F648}";
+    eyeIcon.textContent = "\u{1F441}\uFE0F";
     eyeIcon.setAttribute("aria-hidden", "true");
     const nameSpan = document.createElement("span");
     nameSpan.textContent = folder.name;

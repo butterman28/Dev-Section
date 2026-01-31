@@ -146,7 +146,7 @@ function renderFolderButtons(folders, container) {
     eyeBtn.title = "Toggle folder visibility";
 
     const eyeIcon = document.createElement("span");
-    eyeIcon.textContent = "🙈";
+    eyeIcon.textContent = "👁️";
     eyeIcon.setAttribute("aria-hidden", "true");
 
     const nameSpan = document.createElement("span");
