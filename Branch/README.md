@@ -63,6 +63,9 @@ this one is a bit... so you do
 - look its just like Tree except, well you just dont get blue print of the folder
 - you get the scripts which in l.l.m prompting age we are in is a big adventure 
 - hence the name "Branch", so now you not only see the tree but its branchs
+### P.S 
+all you need to type is branch the g.u.i does the rest 
+
 
 # Download here
 [Branch Multiplatform](https://github.com/butterman28/Dev-Section/releases/tag/v1.0.0)

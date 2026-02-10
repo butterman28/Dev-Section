@@ -245,4 +245,25 @@ async function loadTree() {
   }
 }
 
-window.addEventListener("DOMContentLoaded", loadTree);
+function setupDevRefresh() {
+  const btn = document.getElementById("refresh-app");
+  if (!btn) return;
+
+  btn.addEventListener("click", async () => {
+    try {
+      // Clear any in-memory state
+      selectedPaths.clear();
+
+      // HARD reload – refetches scripts & state
+      window.location.reload();
+    } catch (err) {
+      console.error("Failed to refresh app:", err);
+    }
+  });
+}
+
+
+window.addEventListener("DOMContentLoaded", () => {
+  setupDevRefresh();
+  loadTree();
+});

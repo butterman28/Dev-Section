@@ -8,91 +8,152 @@
     <title>Tauri App</title>
     <script type="module" src="/main.js" defer></script>
     <style>
-      /* styles.css */
-      /* Tree line styles */
-.tree-node {
-  position: relative;
-  padding-left: 20px;
-}
+  /* Tree line styles */
+  .tree-node {
+    position: relative;
+    padding-left: 20px;
+  }
 
-.tree-node::before {
-  content: '';
-  position: absolute;
-  left: 10px;
-  top: 0;
-  bottom: 0;
-  border-left: 1px solid #ccc;
-}
+  .tree-node::before {
+    content: '';
+    position: absolute;
+    left: 10px;
+    top: 0;
+    bottom: 0;
+    border-left: 1px solid #ccc;
+  }
 
-.tree-node::after {
-  content: '';
-  position: absolute;
-  left: 10px;
-  top: 12px;
-  width: 10px;
-  border-top: 1px solid #ccc;
-}
+  .tree-node::after {
+    content: '';
+    position: absolute;
+    left: 10px;
+    top: 12px;
+    width: 10px;
+    border-top: 1px solid #ccc;
+  }
 
-.tree-node.last-child::before {
-  height: 12px;
-}
+  .tree-node.last-child::before {
+    height: 12px;
+  }
 
-.tree-node:not(.last-child)::after {
-  width: 10px;
-}
+  .tree-node:not(.last-child)::after {
+    width: 10px;
+  }
 
-.tree-node.last-child::before {
-  height: 12px;
-}
+  .tree-node.last-child::before {
+    height: 12px;
+  }
 
-#code-tree-content > div.tree-node::before,
-#code-tree-content > div.tree-node::after {
-  display: none;
-}
+  #code-tree-content > div.tree-node::before,
+  #code-tree-content > div.tree-node::after {
+    display: none;
+  }
 
-.tree-node > div:first-child {
-  position: relative;
-  z-index: 1;
-  background: white;
-  padding-right: 8px;
-}
-        .truncate-button {
-          max-width: 160px; /* adjust as needed */
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-              /* styles.css */
-        .hide-scrollbar {
-          -ms-overflow-style: none;  /* IE/Edge */
-          scrollbar-width: none;     /* Firefox */
-        }
-        .hide-scrollbar::-webkit-scrollbar {
-          display: none;             /* Chrome/Safari */
-        }
-    </style>
+  .tree-node > div:first-child {
+    position: relative;
+    z-index: 1;
+    background: white;
+    padding-right: 8px;
+  }
+  
+  .truncate-button {
+    max-width: 160px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+  /* Hide scrollbar for file tree */
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  
+  /* FOLDER OVERVIEW SCROLLBAR - VERTICAL */
+  #folder-overview {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem; /* 1.5 */
+    max-height: 5rem; /* 80px */
+    overflow-y: auto;
+    padding-bottom: 0.25rem; /* 1 */
+    border: 1px solid #e2e8f0;
+    border-radius: 0.25rem;
+    padding: 0.25rem;
+    background-color: white;
+  }
+  
+  /* WebKit browsers (Chrome, Safari, Edge) */
+  #folder-overview::-webkit-scrollbar {
+    width: 8px;
+  }
+  
+  #folder-overview::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+  }
+  
+  #folder-overview::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+  }
+  
+  #folder-overview::-webkit-scrollbar-thumb:hover {
+    background: #555;
+  }
+  
+  /* Firefox */
+  #folder-overview {
+    scrollbar-width: thin;
+    scrollbar-color: #888 #f1f1f1;
+  }
+</style>
   </head>
 
   <body class="bg-slate-50 text-slate-900">
   <main class="h-screen flex flex-col">
+    <!-- Dev Toolbar -->
+      <div
+        id="dev-toolbar"
+        class="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white text-xs"
+      >
+        <span class="opacity-70">DEV</span>
+
+        <button
+          id="refresh-app"
+          class="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded"
+        >
+          🔄 Refresh App
+        </button>
+      </div>
+
     <!-- Content -->
     <!-- Main content area: side-by-side panels -->
     <section class="flex-1 overflow-hidden p-4 flex gap-4">
       <!-- Left panel: Code Tree (will be injected here by codeTree.js) -->
 
       <!-- Right panel: Folder controls + file tree -->
-      <div class="w-1/2 flex flex-col">
-        <!-- Search + Folder Overview -->
-        <div id="folder-controls" class="mb-4">
-          <!-- Search bar will be injected here by createSearchBar() -->
-          <div id="folder-overview" class="flex flex-nowrap gap-2 overflow-x-auto pb-1 hide-scrollbar"></div>
-        </div>
+      <!-- Right panel: Folder controls + file tree -->
+<!-- Right panel: Folder controls + file tree -->
+      <!-- Right panel: Folder controls + file tree -->
+<div class="w-1/2 flex flex-col">
+  <!-- Search + Folder Overview -->
+  <div id="folder-controls" class="mb-4">
+    <!-- Search bar will be injected here by createSearchBar() -->
+    <div id="folder-overview">
+      <!-- Folder buttons will be injected here -->
+    </div>
+  </div>
 
-        <!-- File Tree -->
-        <div id="tree" class="flex-1 overflow-auto bg-white rounded-lg shadow-sm p-4 text-sm font-mono hide-scrollbar">
-          <p class="text-slate-400">Loading…</p>
-        </div>
-      </div>
+  <!-- File Tree -->
+<div id="tree" class="flex-1 overflow-auto bg-white rounded-lg shadow-sm p-4 text-sm font-mono">
+  <p class="text-slate-400">Loading…</p>
+</div>
+</div>
     </section>
   </main>
 </body>

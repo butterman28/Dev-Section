@@ -685,4 +685,19 @@ async function loadTree() {
     document.getElementById("tree").textContent = "Failed to load directory tree";
   }
 }
-window.addEventListener("DOMContentLoaded", loadTree);
+function setupDevRefresh() {
+  const btn = document.getElementById("refresh-app");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    try {
+      selectedPaths.clear();
+      window.location.reload();
+    } catch (err) {
+      console.error("Failed to refresh app:", err);
+    }
+  });
+}
+window.addEventListener("DOMContentLoaded", () => {
+  setupDevRefresh();
+  loadTree();
+});
