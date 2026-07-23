@@ -1,5 +1,6 @@
 import { showSubfolderModal } from "./assets/components/modal.js";
 import { createSearchBar } from "./assets/components/search.js";
+import { knownDirs } from "./assets/components/codeTree.js"; 
 import { 
   initializeCodeTree,
   updateCodeTreePreview,
@@ -15,23 +16,21 @@ let rootNode = null;
  */
 async function propagateFolderCheckbox(folderPath, checked) {
   try {
-    //  Get ALL paths including subfolders (not just files)
-    const allPaths = await invoke("get_all_paths_in_directory", {
-      path: folderPath
-    });
-
-    // Also include the folder itself (in case it's not in the list)
+    const allPaths = await invoke("get_all_paths_in_directory", { path: folderPath });
     allPaths.push(folderPath);
 
     if (checked) {
+      const infos = await invoke("get_file_info", { paths: allPaths });
+      infos.forEach(info => {
+        if (info.is_dir) knownDirs.add(info.path);
+      });
       allPaths.forEach(p => selectedPaths.add(p));
     } else {
       allPaths.forEach(p => selectedPaths.delete(p));
     }
-    
+
     syncCodeTreeCheckboxes();
     updateCodeTreePreview();
-    
   } catch (err) {
     console.error("Failed to propagate checkbox:", err);
   }
@@ -62,6 +61,7 @@ function renderNode(node) {
   itemContainer.appendChild(nameLabel);
 
   if (node.is_dir) {
+    knownDirs.add(node.path);
     const details = document.createElement("details");
     details.dataset.path = node.path;
     details.dataset.loaded = "false";

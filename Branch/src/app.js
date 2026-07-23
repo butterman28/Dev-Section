@@ -116,6 +116,7 @@ function showSnackbar(message, { duration = 3e3, type = "success" } = {}) {
 var { invoke: invoke2 } = window.__TAURI__.core;
 var globalOverlay = null;
 var selectedPaths = /* @__PURE__ */ new Set();
+var knownDirs = /* @__PURE__ */ new Set();
 var rootPath = "";
 var codeTreePanel = null;
 var currentPrompt = "";
@@ -197,6 +198,47 @@ function initializeCodeTree({ rootPath: root, treeContainer, parentSection }) {
   parentSection.prepend(codeTreePanel);
   treeContainer.addEventListener("change", handleCheckboxChange);
 }
+var VirtualTextRenderer = class {
+  constructor(container) {
+    this.container = container;
+    this.lines = [];
+    this.lineHeight = 20;
+    this.container.innerHTML = `
+      <div class="virtual-spacer relative w-full">
+        <div class="virtual-content absolute top-0 left-0 right-0 font-mono text-xs leading-5 whitespace-pre bg-gray-900 text-gray-100 p-2 rounded border border-slate-300 overflow-hidden select-text"></div>
+      </div>
+    `;
+    this.spacer = this.container.querySelector(".virtual-spacer");
+    this.content = this.container.querySelector(".virtual-content");
+    this.container.classList.add("overflow-y-auto", "h-full", "w-full");
+    this.container.addEventListener("scroll", () => this.render());
+    window.addEventListener("resize", () => this.render());
+  }
+  setText(rawText) {
+    this.lines = rawText.split("\n");
+    const totalHeight = this.lines.length * this.lineHeight;
+    this.spacer.style.height = `${totalHeight}px`;
+    this.container.scrollTop = 0;
+    this.render();
+  }
+  render() {
+    if (this.lines.length === 0) {
+      this.content.textContent = "";
+      return;
+    }
+    const scrollTop = this.container.scrollTop;
+    const viewportHeight = this.container.clientHeight;
+    const buffer = 15;
+    const startIndex = Math.max(0, Math.floor(scrollTop / this.lineHeight) - buffer);
+    const endIndex = Math.min(
+      this.lines.length,
+      Math.ceil((scrollTop + viewportHeight) / this.lineHeight) + buffer
+    );
+    this.content.style.transform = `translateY(${startIndex * this.lineHeight}px)`;
+    const visibleLines = this.lines.slice(startIndex, endIndex);
+    this.content.textContent = visibleLines.join("\n");
+  }
+};
 function createCodeTreePanel() {
   const panel = document.createElement("div");
   panel.className = "w-1/2 flex flex-col";
@@ -229,10 +271,6 @@ function createCodeTreePanel() {
       </svg>
       Cancel
     </button>
-    
-    <button id="copy-md" class="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition">Copy as MD</button>
-    <button id="copy-json" class="px-2 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded transition">Copy as JSON</button>
-    <button id="copy-txt" class="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-800 text-white rounded transition">Copy as Text</button>
     <button id="clear-all" class="px-2 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition">Clear All</button>
   </div>
 `;
@@ -246,9 +284,6 @@ function createCodeTreePanel() {
     showSnackbar("Loading cancelled", { type: "info" });
     selectedPaths.clear();
   });
-  panel.querySelector("#copy-md").addEventListener("click", () => copyAs("md"));
-  panel.querySelector("#copy-json").addEventListener("click", () => copyAs("json"));
-  panel.querySelector("#copy-txt").addEventListener("click", () => copyAs("txt"));
   panel.querySelector("#clear-all").addEventListener("click", () => {
     selectedPaths.clear();
     if (!isDir) {
@@ -297,11 +332,7 @@ async function handleCheckboxChange(e) {
 }
 function syncCheckboxes() {
   document.querySelectorAll('#tree input[type="checkbox"]').forEach((cb) => {
-    cb.checked = false;
-  });
-  selectedPaths.forEach((path) => {
-    const cb = document.querySelector(`#tree input[type="checkbox"][data-path="${CSS.escape(path)}"]`);
-    if (cb) cb.checked = true;
+    cb.checked = selectedPaths.has(cb.dataset.path);
   });
 }
 function buildUnixTree(paths, root) {
@@ -334,12 +365,21 @@ function buildUnixTree(paths, root) {
   }
   return render(tree, "", true).trimEnd();
 }
+var currentOutputText = "";
+var virtualViewer = null;
 async function updateCodeTreePreview() {
   previewCancelled = false;
   const container = document.getElementById("code-tree-content");
   if (!container) return;
   if (selectedPaths.size === 0) {
     container.innerHTML = '<p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>';
+    currentOutputText = "";
+    try {
+      await invoke2("write_to_clipboard", { text: "" });
+      showSnackbar("Clipboard cleared", { type: "info" });
+    } catch (err) {
+      console.error("Failed to clear clipboard:", err);
+    }
     return;
   }
   isPreviewLoading = false;
@@ -369,12 +409,11 @@ ${currentPrompt}` : newPrompt;
   const previewContainer = document.createElement("div");
   previewContainer.className = "relative flex-1 min-h-0";
   const copyButton = document.createElement("button");
-  copyButton.className = "absolute top-1 right-5 z-10 px-1.5 py-0.5 text-xs bg-gray-800 text-white rounded opacity-80 hover:opacity-100";
+  copyButton.className = "absolute top-2 right-5 z-20 px-1.5 py-0.5 text-xs bg-gray-800 text-white rounded opacity-80 hover:opacity-100";
   copyButton.textContent = "Copy";
   copyButton.addEventListener("click", async () => {
-    const textToCopy = contentTextarea.value;
     try {
-      await navigator.clipboard.writeText(textToCopy);
+      await invoke2("write_to_clipboard", { text: currentOutputText });
       copyButton.textContent = "Copied!";
       setTimeout(() => copyButton.textContent = "Copy", 2e3);
     } catch (err) {
@@ -383,16 +422,15 @@ ${currentPrompt}` : newPrompt;
       setTimeout(() => copyButton.textContent = "Copy", 2e3);
     }
   });
-  const contentTextarea = document.createElement("textarea");
-  contentTextarea.className = `font-mono text-sm whitespace-pre w-full h-full p-2 rounded border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none`;
-  contentTextarea.value = "Loading summary...";
-  contentTextarea.spellcheck = false;
-  previewContainer.appendChild(contentTextarea);
+  const virtualContainer = document.createElement("div");
+  virtualContainer.id = "virtual-preview-box";
+  previewContainer.appendChild(virtualContainer);
   previewContainer.appendChild(copyButton);
   wrapper.appendChild(inputRow);
   wrapper.appendChild(previewContainer);
   container.innerHTML = "";
   container.appendChild(wrapper);
+  virtualViewer = new VirtualTextRenderer(virtualContainer);
   let baseContent = "";
   if (currentPrompt) {
     baseContent += `${currentPrompt}
@@ -407,23 +445,28 @@ ${currentPrompt}` : newPrompt;
 
 `;
   }
-  const filePaths = sortedPaths.filter((path) => {
-    return !document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
-  });
+  const filePaths = sortedPaths.filter((path) => !knownDirs.has(path));
   if (filePaths.length > 0) {
-    contentTextarea.value = `${baseContent}Loading ${filePaths.length} files... (0/${filePaths.length})`;
+    currentOutputText = `${baseContent}Loading ${filePaths.length} files... (0/${filePaths.length})`;
+    virtualViewer.setText(currentOutputText);
     await loadPreviewBatch({
-      textarea: contentTextarea,
+      viewer: virtualViewer,
       baseContent,
       filePaths
     });
   } else {
-    contentTextarea.value = baseContent || "No files selected.";
+    currentOutputText = baseContent || "No files selected.";
+    virtualViewer.setText(currentOutputText);
     hideLoadingStatus();
+    try {
+      await invoke2("write_to_clipboard", { text: currentOutputText });
+    } catch (err) {
+      console.error("Failed to update clipboard:", err);
+    }
   }
 }
 async function loadPreviewBatch({
-  textarea,
+  viewer,
   baseContent,
   filePaths
 }) {
@@ -452,65 +495,20 @@ async function loadPreviewBatch({
       await new Promise(requestAnimationFrame);
     }
   }
-  textarea.value = output.trimEnd();
+  currentOutputText = output.trimEnd();
+  try {
+    await invoke2("write_to_clipboard", { text: currentOutputText });
+    showSnackbar(
+      currentOutputText ? "Clipboard updated with new context!" : "Clipboard cleared!",
+      { type: "success" }
+    );
+  } catch (err) {
+    console.error("Failed to copy to clipboard:", err);
+  }
+  viewer.setText(currentOutputText);
   hideLoadingStatus();
   showSuccessStatus();
   hideGlobalOverlay();
-}
-async function copyAs(format) {
-  try {
-    let output = "";
-    if (currentPrompt) {
-      output += `${currentPrompt}
----
-
-`;
-    }
-    const filePaths = Array.from(selectedPaths).filter((path) => {
-      return !document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
-    });
-    const fileContents = await invoke2("read_multiple_files", {
-      paths: filePaths
-    });
-    const files = fileContents.map((file) => {
-      const relPath = file.path.replace(rootPath, "").replace(/^[\\/]/, "");
-      return {
-        path: relPath,
-        content: file.error ? `[ERROR: ${file.error}]` : file.content
-      };
-    });
-    let finalText = "";
-    switch (format) {
-      case "txt":
-      case "md":
-        for (const file of files) {
-          output += `# ${file.path}
-${file.content}
-
-`;
-        }
-        finalText = output.trimEnd();
-        break;
-      case "json":
-        finalText = JSON.stringify(
-          {
-            prompt: currentPrompt || null,
-            files
-          },
-          null,
-          2
-        );
-        break;
-      default:
-        throw new Error(`Unsupported format: ${format}`);
-    }
-    await invoke2("plugin:clipboard|write_text", { text: finalText });
-    const formatName = { txt: "Text", md: "Markdown", json: "JSON" }[format];
-    showSnackbar(`Copied as ${formatName}!`, { type: "success" });
-  } catch (err) {
-    console.error("Copy failed:", err);
-    showSnackbar("Copy failed! See console.", { type: "error" });
-  }
 }
 
 // src/main.js
@@ -518,11 +516,13 @@ var { invoke: invoke3 } = window.__TAURI__.core;
 var rootNode = null;
 async function propagateFolderCheckbox(folderPath, checked) {
   try {
-    const allPaths = await invoke3("get_all_paths_in_directory", {
-      path: folderPath
-    });
+    const allPaths = await invoke3("get_all_paths_in_directory", { path: folderPath });
     allPaths.push(folderPath);
     if (checked) {
+      const infos = await invoke3("get_file_info", { paths: allPaths });
+      infos.forEach((info) => {
+        if (info.is_dir) knownDirs.add(info.path);
+      });
       allPaths.forEach((p) => selectedPaths.add(p));
     } else {
       allPaths.forEach((p) => selectedPaths.delete(p));
@@ -548,6 +548,7 @@ function renderNode(node) {
   itemContainer.appendChild(checkbox);
   itemContainer.appendChild(nameLabel);
   if (node.is_dir) {
+    knownDirs.add(node.path);
     const details = document.createElement("details");
     details.dataset.path = node.path;
     details.dataset.loaded = "false";

@@ -21,6 +21,14 @@ struct FileInfo {
     is_dir: bool,
 }
 
+fn is_ignored(path: &std::path::Path) -> bool {
+    path.ancestors().any(|p| {
+        p.file_name()
+            .map(|n| IGNORED_DIRS.contains(&n.to_string_lossy().as_ref()))
+            .unwrap_or(false)
+    })
+}
+
 #[tauri::command]
 fn get_file_info(paths: Vec<String>) -> Result<Vec<FileInfo>, String> {
     let mut results = Vec::new();
@@ -82,26 +90,17 @@ fn get_all_files_in_directory(path: String) -> Result<Vec<String>, String> {
         .follow_links(false)
         .max_depth(10)
         .into_iter()
+        .filter_entry(|e| !is_ignored(e.path()))  // prune whole subtree, don't even descend
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
     {
-        // Skip ignored directories
-        let entry_path = entry.path();
-        if let Some(parent) = entry_path.parent() {
-            if let Some(dir_name) = parent.file_name() {
-                if tree::IGNORED_DIRS.contains(&dir_name.to_string_lossy().as_ref()) {
-                    continue;
-                }
-            }
-        }
-        
-        if let Some(path_str) = entry_path.to_str() {
+        if let Some(path_str) = entry.path().to_str() {
             files.push(path_str.to_string());
         }
     }
 
-    Ok(files)
-}
+        Ok(files)
+    }
 
 
 
@@ -213,19 +212,10 @@ async fn get_all_paths_in_directory(path: String) -> Result<Vec<String>, String>
             .follow_links(false)
             .max_depth(10)
             .into_iter()
+            .filter_entry(|e| !is_ignored(e.path()))  // prune whole subtree, don't even descend
             .filter_map(|e| e.ok())
         {
-            let entry_path = entry.path();
-
-            if let Some(parent) = entry_path.parent() {
-                if let Some(dir_name) = parent.file_name() {
-                    if IGNORED_DIRS.contains(&dir_name.to_string_lossy().as_ref()) {
-                        continue;
-                    }
-                }
-            }
-
-            if let Some(path_str) = entry_path.to_str() {
+            if let Some(path_str) = entry.path().to_str() {
                 paths.push(path_str.to_string());
             }
         }
@@ -235,13 +225,49 @@ async fn get_all_paths_in_directory(path: String) -> Result<Vec<String>, String>
     .await
     .map_err(|e| e.to_string())?
 }
+use std::io::Write;
+use std::process::{Command, Stdio};
 
+#[tauri::command]
+fn write_to_clipboard(text: String) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        // On Linux, subprocess handoff handles Wayland/X11 selection ownership in background
+        let mut child = Command::new("wl-copy")
+            .stdin(Stdio::piped())
+            .spawn()
+            .or_else(|_| {
+                Command::new("xclip")
+                    .arg("-selection")
+                    .arg("clipboard")
+                    .stdin(Stdio::piped())
+                    .spawn()
+            })
+            .map_err(|e| format!("Clipboard binary missing (install wl-clipboard or xclip): {}", e))?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Windows (Win32 API) & macOS (NSPasteboard) write directly to OS central memory
+        let mut clipboard = arboard::Clipboard::new()
+            .map_err(|e| format!("Failed to initialize clipboard: {}", e))?;
+        
+        clipboard.set_text(text)
+            .map_err(|e| format!("Failed to set text in clipboard: {}", e))
+    }
+}
 
 fn main() {
     tauri::Builder::default()
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_clipboard::init()) 
+    //.plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             get_tree_for_path,
             get_launch_dir,
@@ -251,7 +277,8 @@ fn main() {
             get_all_files_in_directory,
             get_all_paths_in_directory,
             read_multiple_files,
-            get_file_info
+            get_file_info,
+            write_to_clipboard
         ])
         .run(tauri::generate_context!())
         .expect("error while running Branch");

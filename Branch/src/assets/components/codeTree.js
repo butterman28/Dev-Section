@@ -1,8 +1,11 @@
 // ./assets/features/codeTree.js
 import { showSnackbar } from "./snackbar.js";
+//const { writeText } = window.__TAURI__.clipboardManager;
+//import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 const { invoke } = window.__TAURI__.core;
 let globalOverlay = null;
 let selectedPaths = new Set();
+var knownDirs = new Set(); 
 let rootPath = '';
 let codeTreePanel = null;
 let currentPrompt = ''; 
@@ -112,6 +115,61 @@ export function initializeCodeTree({ rootPath: root, treeContainer, parentSectio
   treeContainer.addEventListener('change', handleCheckboxChange);
 }
 
+
+class VirtualTextRenderer {
+  constructor(container) {
+    this.container = container;
+    this.lines = [];
+    this.lineHeight = 20; // Exact pixel height matching text-xs / leading-5
+
+    // Build container structure
+    this.container.innerHTML = `
+      <div class="virtual-spacer relative w-full">
+        <div class="virtual-content absolute top-0 left-0 right-0 font-mono text-xs leading-5 whitespace-pre bg-gray-900 text-gray-100 p-2 rounded border border-slate-300 overflow-hidden select-text"></div>
+      </div>
+    `;
+
+    this.spacer = this.container.querySelector('.virtual-spacer');
+    this.content = this.container.querySelector('.virtual-content');
+
+    this.container.classList.add('overflow-y-auto', 'h-full', 'w-full');
+    
+    this.container.addEventListener('scroll', () => this.render());
+    window.addEventListener('resize', () => this.render());
+  }
+
+  setText(rawText) {
+    this.lines = rawText.split('\n');
+    const totalHeight = this.lines.length * this.lineHeight;
+    this.spacer.style.height = `${totalHeight}px`;
+    this.container.scrollTop = 0;
+    this.render();
+  }
+
+  render() {
+    if (this.lines.length === 0) {
+      this.content.textContent = '';
+      return;
+    }
+
+    const scrollTop = this.container.scrollTop;
+    const viewportHeight = this.container.clientHeight;
+
+    const buffer = 15;
+    const startIndex = Math.max(0, Math.floor(scrollTop / this.lineHeight) - buffer);
+    const endIndex = Math.min(
+      this.lines.length,
+      Math.ceil((scrollTop + viewportHeight) / this.lineHeight) + buffer
+    );
+
+    this.content.style.transform = `translateY(${startIndex * this.lineHeight}px)`;
+    
+    // Render ONLY visible slice (~50 lines in DOM at once)
+    const visibleLines = this.lines.slice(startIndex, endIndex);
+    this.content.textContent = visibleLines.join('\n');
+  }
+}
+
 function createCodeTreePanel() {
   const panel = document.createElement('div');
   panel.className = 'w-1/2 flex flex-col';
@@ -144,10 +202,6 @@ function createCodeTreePanel() {
       </svg>
       Cancel
     </button>
-    
-    <button id="copy-md" class="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition">Copy as MD</button>
-    <button id="copy-json" class="px-2 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded transition">Copy as JSON</button>
-    <button id="copy-txt" class="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-800 text-white rounded transition">Copy as Text</button>
     <button id="clear-all" class="px-2 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition">Clear All</button>
   </div>
 `;
@@ -166,9 +220,6 @@ function createCodeTreePanel() {
     //syncCheckboxes();
     //updateCodeTreePreview();
   });  
-  panel.querySelector('#copy-md').addEventListener('click', () => copyAs('md'));
-  panel.querySelector('#copy-json').addEventListener('click', () => copyAs('json'));
-  panel.querySelector('#copy-txt').addEventListener('click', () => copyAs('txt'));
   panel.querySelector('#clear-all').addEventListener('click', () => {
     selectedPaths.clear();
     if (!isDir) {
@@ -219,6 +270,7 @@ async function handleCheckboxChange(e) {
       selectedPaths.add(path);
     } else {
       selectedPaths.delete(path);
+
     }
   }
 
@@ -229,15 +281,8 @@ async function handleCheckboxChange(e) {
 
 }
 export function syncCheckboxes() {
-  // Reset all checkboxes
   document.querySelectorAll('#tree input[type="checkbox"]').forEach(cb => {
-    cb.checked = false;
-  });
-
-  // Re-check only selected paths
-  selectedPaths.forEach(path => {
-    const cb = document.querySelector(`#tree input[type="checkbox"][data-path="${CSS.escape(path)}"]`);
-    if (cb) cb.checked = true;
+    cb.checked = selectedPaths.has(cb.dataset.path);
   });
 }
 
@@ -285,6 +330,10 @@ function buildUnixTree(paths, root) {
   return render(tree, '', true).trimEnd();
 }
 
+// Variable to hold current viewer state across previews
+let currentOutputText = "";
+let virtualViewer = null;
+
 async function updateCodeTreePreview() {
   previewCancelled = false;
   const container = document.getElementById('code-tree-content');
@@ -292,6 +341,13 @@ async function updateCodeTreePreview() {
 
   if (selectedPaths.size === 0) {
     container.innerHTML = '<p class="text-slate-500 italic">Select files using checkboxes in the tree.</p>';
+    currentOutputText = "";
+    try {
+      await invoke('write_to_clipboard', { text: "" });
+      showSnackbar("Clipboard cleared", { type: "info" });
+    } catch (err) {
+      console.error("Failed to clear clipboard:", err);
+    }
     return;
   }
 
@@ -334,12 +390,11 @@ async function updateCodeTreePreview() {
 
   // Copy button
   const copyButton = document.createElement('button');
-  copyButton.className = 'absolute top-1 right-5 z-10 px-1.5 py-0.5 text-xs bg-gray-800 text-white rounded opacity-80 hover:opacity-100';
+  copyButton.className = 'absolute top-2 right-5 z-20 px-1.5 py-0.5 text-xs bg-gray-800 text-white rounded opacity-80 hover:opacity-100';
   copyButton.textContent = 'Copy';
   copyButton.addEventListener('click', async () => {
-    const textToCopy = contentTextarea.value;
     try {
-      await navigator.clipboard.writeText(textToCopy);
+      await invoke('write_to_clipboard', { text: currentOutputText });
       copyButton.textContent = 'Copied!';
       setTimeout(() => copyButton.textContent = 'Copy', 2000);
     } catch (err) {
@@ -349,13 +404,11 @@ async function updateCodeTreePreview() {
     }
   });
 
-  // Editable preview area
-  const contentTextarea = document.createElement('textarea');
-  contentTextarea.className = `font-mono text-sm whitespace-pre w-full h-full p-2 rounded border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none`;
-  contentTextarea.value = 'Loading summary...';
-  contentTextarea.spellcheck = false;
+  // Virtual Text Preview Container (Replaces textarea)
+  const virtualContainer = document.createElement('div');
+  virtualContainer.id = 'virtual-preview-box';
   
-  previewContainer.appendChild(contentTextarea);
+  previewContainer.appendChild(virtualContainer);
   previewContainer.appendChild(copyButton);
 
   wrapper.appendChild(inputRow);
@@ -363,6 +416,10 @@ async function updateCodeTreePreview() {
   
   container.innerHTML = '';
   container.appendChild(wrapper);
+
+  // Instantiate the virtual viewer in the new DOM node
+  virtualViewer = new VirtualTextRenderer(virtualContainer);
+
   // Build base content (prompt + tree structure)
   let baseContent = '';
   
@@ -377,34 +434,38 @@ async function updateCodeTreePreview() {
     baseContent += `${treeText}\n\n`;
   }
 
-  //  Filter out directories - only load files
-  const filePaths = sortedPaths.filter(path => {
-    return !document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
-  })
+  // Filter out directories - only load files
+  const filePaths = sortedPaths.filter(path => !knownDirs.has(path));
 
-  //  Show file count summary immediately
+  // Show file count summary immediately
   if (filePaths.length > 0) {
-    contentTextarea.value = `${baseContent}Loading ${filePaths.length} files... (0/${filePaths.length})`;
-    
+    currentOutputText = `${baseContent}Loading ${filePaths.length} files... (0/${filePaths.length})`;
+    virtualViewer.setText(currentOutputText);
+
     await loadPreviewBatch({
-      textarea: contentTextarea,
+      viewer: virtualViewer,
       baseContent,
       filePaths
     });
   } else {
-    contentTextarea.value = baseContent || 'No files selected.';
+    currentOutputText = baseContent || 'No files selected.';
+    virtualViewer.setText(currentOutputText);
     hideLoadingStatus();
+
+    // Sync current baseContent to clipboard
+    try {
+      await invoke('write_to_clipboard', { text: currentOutputText });
+    } catch (err) {
+      console.error("Failed to update clipboard:", err);
+    }
   }
 }
 
-//  Load ONE file at a time with proper yielding
-//  Load ONE file at a time with proper yielding
 async function loadPreviewBatch({
-  textarea,
+  viewer,
   baseContent,
   filePaths
 }) {
-  //showGlobalOverlay(`Loading ${filePaths.length} files…`);
   await new Promise(requestAnimationFrame);
   
   showLoadingStatus(filePaths.length, 0);
@@ -412,7 +473,8 @@ async function loadPreviewBatch({
   // Yield once so spinner paints immediately
   await new Promise(requestAnimationFrame);
   await new Promise(resolve => setTimeout(resolve, 0));
-  //  Rust does parallel IO here
+  
+  // Rust does parallel IO here
   const fileContents = await invoke('read_multiple_files', {
     paths: filePaths
   });
@@ -441,12 +503,26 @@ async function loadPreviewBatch({
     }
   }
 
-  //  ONE DOM WRITE (this is the key)
-  textarea.value = output.trimEnd();
+  // Store full string globally for Copy operations
+  currentOutputText = output.trimEnd();
+
+  // --- AUTOMATIC CLIPBOARD COPY VIA RUST ---
+  try {
+    await invoke('write_to_clipboard', { text: currentOutputText });
+    showSnackbar(
+      currentOutputText ? "Clipboard updated with new context!" : "Clipboard cleared!", 
+      { type: "success" }
+    );
+  } catch (err) {
+    console.error("Failed to copy to clipboard:", err);
+  }
+
+  // Render to DOM via Virtual Windowing (Instant, zero freeze)
+  viewer.setText(currentOutputText);
 
   hideLoadingStatus();
   showSuccessStatus();
-  hideGlobalOverlay()
+  hideGlobalOverlay();
 }
 export function createPromptBar(container, onSearch) {
   // Don’t create twice
@@ -480,26 +556,36 @@ async function copyAs(format) {
     if (currentPrompt) {
       output += `${currentPrompt}\n---\n\n`;
     }
-    //  Filter out directories
-    const filePaths = Array.from(selectedPaths).filter(path => {
-      return !document.querySelector(`details[data-path="${CSS.escape(path)}"]`);
-    });
 
-    //  BATCH READ
-    const fileContents = await invoke('read_multiple_files', {
-      paths: filePaths
-    });
+    const allSelected = Array.from(selectedPaths);
+    const filePaths = allSelected.filter(path => !knownDirs.has(path));
 
-    // Collect file data
+    if (filePaths.length === 0 && !currentPrompt) {
+      showSnackbar('No files selected to copy', { type: 'info' });
+      return;
+    }
+
+    // Add unix tree to md/txt output
+    if (format !== 'json') {
+      const treeText = buildUnixTree(Array.from(selectedPaths).sort(), rootPath);
+      if (treeText) output += `${treeText}\n\n`;
+    }
+
+    const fileContents = await invoke('read_multiple_files', { paths: filePaths });
+
     const files = fileContents.map(file => {
-      const relPath = file.path.replace(rootPath, '').replace(/^[\\/]/, '');
-      return { 
-        path: relPath, 
-        content: file.error ? `[ERROR: ${file.error}]` : file.content 
+      let relPath = file.path;
+      if (rootPath && file.path.startsWith(rootPath)) {
+        relPath = file.path.slice(rootPath.length).replace(/^[\\/]+/, '');
+      } else {
+        relPath = file.path.split(/[\\/]/).pop() || file.path;
+      }
+      return {
+        path: relPath,
+        content: file.error ? `[ERROR: ${file.error}]` : file.content
       };
     });
 
-    // Format based on `format`
     let finalText = '';
     switch (format) {
       case 'txt':
@@ -509,34 +595,27 @@ async function copyAs(format) {
         }
         finalText = output.trimEnd();
         break;
-
       case 'json':
-        finalText = JSON.stringify(
-          {
-            prompt: currentPrompt || null,
-            files: files
-          },
-          null,
-          2
-        );
+        finalText = JSON.stringify({ prompt: currentPrompt || null, files }, null, 2);
         break;
-
       default:
         throw new Error(`Unsupported format: ${format}`);
     }
-    
-    // Copy to clipboard
-    await invoke('plugin:clipboard|write_text', { text: finalText });
-    
+
+    // Reliable clipboard: textarea execCommand fallback if navigator.clipboard fails
+    await invoke('write_to_clipboard', { text: finalText });
+
     const formatName = { txt: 'Text', md: 'Markdown', json: 'JSON' }[format];
     showSnackbar(`Copied as ${formatName}!`, { type: 'success' });
+
   } catch (err) {
-    console.error('Copy failed:', err);
-    showSnackbar('Copy failed! See console.', { type: 'error' });
+    console.error('[copyAs] Error:', err);
+    showSnackbar(`Copy failed: ${err.message || err}`, { type: 'error', duration: 6000 });
   }
 }
 export { 
   updateCodeTreePreview, 
   selectedPaths, 
+  knownDirs,
   syncCheckboxes as syncCodeTreeCheckboxes 
 };
