@@ -232,7 +232,14 @@ use std::process::{Command, Stdio};
 fn write_to_clipboard(text: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        // On Linux, subprocess handoff handles Wayland/X11 selection ownership in background
+        // If string is empty, clear the clipboard
+        if text.is_empty() {
+            let _ = Command::new("wl-copy").arg("--clear").status()
+                .or_else(|_| Command::new("xclip").args(["-selection", "clipboard", "/dev/null"]).status());
+            return Ok(());
+        }
+
+        // Otherwise write new content
         let mut child = Command::new("wl-copy")
             .stdin(Stdio::piped())
             .spawn()
@@ -253,12 +260,14 @@ fn write_to_clipboard(text: String) -> Result<(), String> {
 
     #[cfg(not(target_os = "linux"))]
     {
-        // Windows (Win32 API) & macOS (NSPasteboard) write directly to OS central memory
         let mut clipboard = arboard::Clipboard::new()
             .map_err(|e| format!("Failed to initialize clipboard: {}", e))?;
         
-        clipboard.set_text(text)
-            .map_err(|e| format!("Failed to set text in clipboard: {}", e))
+        if text.is_empty() {
+            clipboard.clear().map_err(|e| format!("Failed to clear clipboard: {}", e))
+        } else {
+            clipboard.set_text(text).map_err(|e| format!("Failed to set text in clipboard: {}", e))
+        }
     }
 }
 
