@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <link href="./output.css" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Wingman</title>
+    <script type="module" src="/main.js" defer></script>
+    <style>
+      /* Only keep what Tailwind can't do easily: Tree connector lines */
+      .tree-node { position: relative; padding-left: 20px; }
+      .tree-node::before {
+        content: ''; position: absolute; left: 10px; top: 0; bottom: 0;
+        border-left: 1px solid #cbd5e1;
+      }
+      .tree-node::after {
+        content: ''; position: absolute; left: 10px; top: 12px; width: 10px;
+        border-top: 1px solid #cbd5e1;
+      }
+      .tree-node.last-child::before { height: 12px; }
+      
+      /* Thin scrollbar for sidebar */
+      .sidebar-content::-webkit-scrollbar { width: 4px; }
+      .sidebar-content::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+
+      /* Hide scrollbar for the editor tab bar */
+      .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      .hide-scrollbar::-webkit-scrollbar { display: none; }
+
+      /* Smooth dropdown animation */
+      .dropdown-menu {
+        transform-origin: top right;
+        transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+      }
+      .dropdown-menu.hidden {
+        transform: scale(0.95);
+        opacity: 0;
+        pointer-events: none;
+      }
+      .dropdown-menu:not(.hidden) {
+        transform: scale(1);
+        opacity: 1;
+        pointer-events: auto;
+      }
+    </style>
+  </head>
+
+  <body class="bg-slate-50 text-slate-900 h-screen flex flex-col overflow-hidden">
+    <!-- Top Toolbar -->
+    <header class="flex items-center justify-between px-4 py-3 bg-slate-900 text-white shrink-0">
+      <div class="flex items-center gap-3 flex-1">
+        <span class="font-bold text-lg">Wingman</span>
+        
+        <!-- Project Switcher -->
+        <div class="relative ml-4" id="project-switcher-container">
+          <button id="project-switcher" class="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors text-sm">
+            <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+            </svg>
+            <span id="current-project-name" class="text-slate-200">No Project</span>
+            <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          
+          <!-- Dropdown Menu -->
+          <div id="project-dropdown" class="hidden absolute top-full left-0 mt-2 w-72 bg-white rounded-lg shadow-xl border border-slate-200 z-[1000] overflow-hidden">
+            <div class="max-h-96 overflow-y-auto">
+              <div id="project-dropdown-list" class="py-2">
+                <!-- Projects injected here -->
+              </div>
+            </div>
+            <div class="border-t border-slate-200 p-2">
+              <button id="open-project-dropdown" class="w-full px-3 py-2 text-left text-sm text-blue-600 hover:bg-blue-50 rounded-md flex items-center gap-2 transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                Open Another Project
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="flex items-center gap-2">
+        <!-- Menu Toggle -->
+        <button id="menu-toggle" class="p-2 hover:bg-slate-800 rounded-lg transition-colors">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Sidebar Overlay -->
+    <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9997] opacity-0 invisible transition-opacity duration-300"></div>
+    
+    <!-- Main Menu Dropdown -->
+    <div id="main-menu-dropdown" class="dropdown-menu hidden absolute right-4 top-[60px] w-56 bg-white rounded-lg shadow-xl border border-slate-200 z-[1000] overflow-hidden">
+      <div class="py-2">
+        <button id="refresh-app" class="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
+          <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+          </svg>
+          <span>Refresh</span>
+        </button>
+        
+        <button id="toggle-sidebar" class="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
+          <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+          </svg>
+          <span>Files</span>
+        </button>
+        
+        <div class="border-t border-slate-200 my-2"></div>
+        
+        <button id="save-current-file" class="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
+          <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>
+          </svg>
+          <span>Save Current File</span>
+        </button>
+        
+        <button id="copy-current-file" class="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
+          <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/>
+          </svg>
+          <span>Copy Current File</span>
+        </button>
+        
+        <button id="copy-all-files" class="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
+          <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/>
+          </svg>
+          <span>Copy All Files</span>
+        </button>
+        
+        <button id="clear-all-files" class="w-full px-4 py-3 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+          <span>Clear All</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Sidebar (File Tree) -->
+    <aside id="sidebar" class="fixed top-0 left-0 bottom-0 w-[85vw] max-w-[320px] bg-white z-[9998] -translate-x-full transition-transform duration-300 ease-out shadow-2xl flex flex-col">
+      <!-- Sidebar Header -->
+      <div class="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50 shrink-0">
+        <h3 class="font-bold text-slate-800 text-sm">File Tree</h3>
+        <button id="close-sidebar" class="p-2 hover:bg-slate-200 rounded-lg transition-colors">
+          <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Project List -->
+      <div id="project-list" class="mb-3 border-b border-slate-200 pb-2">
+        <!-- Projects injected here -->
+      </div>
+      
+      <!-- Sidebar Content -->
+      <div class="sidebar-content flex-1 overflow-y-auto p-4">
+        <!-- File Tree -->
+        <div id="tree" class="text-sm font-mono text-slate-600">
+          <p class="text-slate-400 italic">Loading…</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area (Code Preview takes full screen) -->
+    <main class="flex-1 overflow-hidden p-4 relative w-full">
+      <!-- Code Tree Panel will be injected here by codeTree.js -->
+    </main>
+
+    <!-- Load UI Logic Scripts -->
+    <script type="module" src="/assets/components/sidebar.js"></script>
+    <script type="module" src="/assets/components/menu.js"></script>
+  </body>
+</html>

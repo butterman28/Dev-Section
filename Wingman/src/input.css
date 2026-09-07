@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Larger touch targets for mobile checkboxes */
+  input[type="checkbox"] {
+    @apply w-5 h-5 accent-blue-600 shrink-0;
+  }
+
+  /* Thin scrollbars */
+  ::-webkit-scrollbar {
+    @apply w-1 h-1;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-300 rounded;
+  }
+
+  #folder-overview {
+    -webkit-overflow-scrolling: touch;
+  }
+}
