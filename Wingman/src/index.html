@@ -27,21 +27,38 @@
       /* Hide scrollbar for the editor tab bar */
       .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       .hide-scrollbar::-webkit-scrollbar { display: none; }
-
-      /* Smooth dropdown animation */
-      .dropdown-menu {
-        transform-origin: top right;
+    </style>
+    <style>
+      /* Project dropdown animation */
+      #project-dropdown {
+        transform-origin: top left;
         transition: transform 0.2s ease-out, opacity 0.2s ease-out;
       }
-      .dropdown-menu.hidden {
+      #project-dropdown.hidden {
         transform: scale(0.95);
         opacity: 0;
         pointer-events: none;
       }
-      .dropdown-menu:not(.hidden) {
+      #project-dropdown:not(.hidden) {
         transform: scale(1);
         opacity: 1;
         pointer-events: auto;
+      }
+      /* Close button hover effect */
+      .close-project-btn {
+        opacity: 0.6;
+        transition: opacity 0.2s;
+      }
+      .close-project-btn:hover {
+        opacity: 1;
+      }
+      /* Project switcher button */
+      #project-switcher {
+        transition: all 0.2s;
+      }
+      #project-switcher:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
       }
     </style>
   </head>
@@ -49,55 +66,54 @@
   <body class="bg-slate-50 text-slate-900 h-screen flex flex-col overflow-hidden">
     <!-- Top Toolbar -->
     <header class="flex items-center justify-between px-4 py-3 bg-slate-900 text-white shrink-0">
-      <div class="flex items-center gap-3 flex-1">
-        <span class="font-bold text-lg">Wingman</span>
-        
-        <!-- Project Switcher -->
-        <div class="relative ml-4" id="project-switcher-container">
-          <button id="project-switcher" class="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors text-sm">
-            <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+  <div class="flex items-center gap-3 flex-1">
+    <!-- Project Switcher (now no "Wingman" text) -->
+    <div class="relative" id="project-switcher-container">
+      <button id="project-switcher" class="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors text-xs sm:text-sm">
+        <!-- Folder icon -->
+        <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+        </svg>
+        <!-- Project name -->
+        <span id="current-project-name" class="text-slate-200 truncate max-w-[80px] sm:max-w-[150px]">No Project</span>
+        <!-- Chevron -->
+        <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </button>
+
+      <!-- Dropdown (unchanged) -->
+      <div id="project-dropdown" class="hidden absolute top-full left-0 mt-2 w-72 bg-white rounded-lg shadow-xl border border-slate-200 z-[1000] overflow-hidden">
+        <div class="max-h-96 overflow-y-auto">
+          <div id="project-dropdown-list" class="py-2"></div>
+        </div>
+        <div class="border-t border-slate-200 p-2">
+          <button id="open-project-dropdown" class="w-full px-3 py-2 text-left text-sm text-blue-600 hover:bg-blue-50 rounded-md flex items-center gap-2 transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
             </svg>
-            <span id="current-project-name" class="text-slate-200">No Project</span>
-            <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-            </svg>
+            Open Another Project
           </button>
-          
-          <!-- Dropdown Menu -->
-          <div id="project-dropdown" class="hidden absolute top-full left-0 mt-2 w-72 bg-white rounded-lg shadow-xl border border-slate-200 z-[1000] overflow-hidden">
-            <div class="max-h-96 overflow-y-auto">
-              <div id="project-dropdown-list" class="py-2">
-                <!-- Projects injected here -->
-              </div>
-            </div>
-            <div class="border-t border-slate-200 p-2">
-              <button id="open-project-dropdown" class="w-full px-3 py-2 text-left text-sm text-blue-600 hover:bg-blue-50 rounded-md flex items-center gap-2 transition-colors">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-                </svg>
-                Open Another Project
-              </button>
-            </div>
-          </div>
         </div>
       </div>
-      
-      <div class="flex items-center gap-2">
-        <!-- Menu Toggle -->
-        <button id="menu-toggle" class="p-2 hover:bg-slate-800 rounded-lg transition-colors">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
-          </svg>
-        </button>
-      </div>
-    </header>
+    </div>
+  </div>
+
+  <!-- Hamburger menu (unchanged) -->
+  <div class="flex items-center gap-2">
+    <button id="menu-toggle" class="p-2 hover:bg-slate-800 rounded-lg transition-colors">
+      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+      </svg>
+    </button>
+  </div>
+</header>
 
     <!-- Sidebar Overlay -->
     <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9997] opacity-0 invisible transition-opacity duration-300"></div>
     
     <!-- Main Menu Dropdown -->
-    <div id="main-menu-dropdown" class="dropdown-menu hidden absolute right-4 top-[60px] w-56 bg-white rounded-lg shadow-xl border border-slate-200 z-[1000] overflow-hidden">
+    <div id="main-menu-dropdown" class="hidden absolute right-3 top-[48px] w-56 bg-white rounded-lg shadow-xl border border-slate-200 z-[1000] overflow-hidden">
       <div class="py-2">
         <button id="refresh-app" class="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
           <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
