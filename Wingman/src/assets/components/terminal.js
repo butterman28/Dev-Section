@@ -6,33 +6,89 @@ let rootPath = "";
 let history = [];
 let historyIndex = -1;
 
-export function initTerminal(container, projectRoot) {
+export function initTerminal(container, projectRoot, onClose) {
   rootPath = projectRoot;
   currentPath = projectRoot;
-  
   container.innerHTML = `
-    <div class="flex flex-col h-full bg-gray-900 text-gray-100 font-mono rounded-lg border border-slate-700 shadow-xl">
-      <div class="flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700 rounded-t-lg shrink-0">
-        <span class="text-slate-300 text-xs font-bold">Branch Terminal</span>
-        <button id="terminal-clear" class="text-slate-400 hover:text-white text-xs px-2 py-1 min-h-[44px]">Clear</button>
+<div class="flex flex-col h-full min-h-0 bg-gray-900 text-gray-100 font-mono rounded-lg border border-slate-700 shadow-xl">
+    <div class="flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700 shrink-0 pt-safe">
+    <div class="flex items-center gap-2 min-w-0 flex-1">
+          <span class="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
+          <div class="flex flex-col min-w-0">
+            <span class="text-slate-300 text-xs font-bold truncate">Branch Terminal</span>
+            <span id="terminal-cwd" class="text-slate-500 text-[10px] font-mono truncate" title=""></span>
+          </div>
+        </div>
+        <div class="flex gap-1 shrink-0">
+          <button id="terminal-clear" class="text-slate-400 hover:text-white text-xs px-3 py-1.5 rounded-md hover:bg-slate-700 transition-colors">Clear</button>
+          <button id="terminal-close" class="text-slate-400 hover:text-white text-xl leading-none w-8 h-8 flex items-center justify-center rounded-md hover:bg-slate-700 transition-colors">&times;</button>
+        </div>
       </div>
-      <div id="terminal-output" class="flex-1 overflow-y-auto p-3 whitespace-pre-wrap break-all text-xs sm:text-sm"></div>
-      <div class="flex items-center px-3 py-2 bg-slate-800 border-t border-slate-700 rounded-b-lg shrink-0">
-        <span id="terminal-prompt" class="mr-2 text-blue-400 text-xs whitespace-nowrap"></span>
-        <!-- 16px (text-base) prevents iOS Safari auto-zoom on focus -->
-        <input id="terminal-input" type="text" class="flex-1 bg-transparent border-none outline-none text-green-400 text-base" autocomplete="off" spellcheck="false" autocapitalize="off" />
+      <div id="terminal-output" class="flex-1 min-h-0 overflow-y-auto p-3 whitespace-pre-wrap break-all text-xs sm:text-sm overscroll-contain"></div>
+    <div class="shrink-0 bg-slate-800 border-t border-slate-700 pb-safe">
+        <div class="flex items-center gap-2 px-2 py-2">
+          <div class="flex-1 flex items-center bg-slate-900/60 border border-slate-700 rounded-lg px-3 min-h-[44px] focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500/30 transition-colors">
+            <span class="text-green-500 font-mono text-sm mr-2 select-none">$</span>
+            <input id="terminal-input"
+                  type="text"
+                  inputmode="text"
+                  enterkeyhint="send"
+                  class="flex-1 bg-transparent border-none outline-none text-green-400 text-sm font-mono min-h-[40px] placeholder:text-slate-600 overflow-x-auto whitespace-nowrap"
+                  placeholder="type a command..."
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="off"
+                  spellcheck="false" />
+          </div>
+          <button id="terminal-send"
+                  class="shrink-0 w-11 h-11 flex items-center justify-center bg-blue-600 hover:bg-blue-500 active:bg-blue-700 rounded-lg transition-colors"
+                  aria-label="Run command">
+            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 5l7 7-7 7M5 12h14"/>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   `;
 
   const output = container.querySelector("#terminal-output");
   const input = container.querySelector("#terminal-input");
-  const prompt = container.querySelector("#terminal-prompt");
   const clearBtn = container.querySelector("#terminal-clear");
+  const closeBtn = container.querySelector("#terminal-close");
+  const sendBtn = container.querySelector("#terminal-send");
+  const cwdEl = container.querySelector("#terminal-cwd");
 
-  const updatePrompt = () => {
-    const displayPath = currentPath === rootPath ? "~" : currentPath.replace(rootPath, "~");
-    prompt.textContent = `user@branch:${displayPath}$`;
+  if (onClose) closeBtn.addEventListener("click", onClose);
+
+  input.addEventListener("focus", () => {
+    setTimeout(() => {
+      input.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 300);
+  });
+
+  // --- Build a prompt string for echoing commands in output ---
+  const buildPrompt = () => {
+    const projectName = rootPath.split(/[\\/]/).filter(Boolean).pop() || "project";
+    if (currentPath === rootPath) {
+      return `user@branch:${projectName}$`;
+    }
+    let rel = currentPath.replace(rootPath, "").replace(/^[\\/]/, "");
+    return `user@branch:${projectName}/${rel}$`;
+  };
+
+  // --- Update the header CWD display ---
+  const updateCwdDisplay = () => {
+    if (!cwdEl) return;
+    // Show relative path from root, or "~" if at root
+    let displayPath;
+    if (currentPath === rootPath) {
+      displayPath = "~";
+    } else {
+      displayPath = "~/" + currentPath.replace(rootPath, "").replace(/^[\\/]/, "");
+    }
+    cwdEl.textContent = displayPath;
+    cwdEl.title = currentPath; // full path on hover/long-press
   };
 
   const print = (text, isError = false) => {
@@ -44,7 +100,8 @@ export function initTerminal(container, projectRoot) {
   };
 
   clearBtn.addEventListener("click", () => { output.innerHTML = ""; });
-  updatePrompt();
+
+  updateCwdDisplay();
   print("Welcome to Branch Terminal.");
   print("POSIX: ls, cat, grep, sed, mkdir, find (via busybox.wasm)");
   print("Git: init, clone <url>, status, add, commit -m 'msg', branch, checkout <branch>");
@@ -54,20 +111,18 @@ export function initTerminal(container, projectRoot) {
       const cmdLine = input.value.trim();
       input.value = "";
       if (!cmdLine) return;
-
       history.push(cmdLine);
       historyIndex = history.length;
-      print(`${prompt.textContent} ${cmdLine}`);
-
+      // Echo with full prompt so history is readable
+      print(`${buildPrompt()} ${cmdLine}`);
       const args = cmdLine.match(/(?:[^\s"]+|"[^"]*")+/g)?.map(arg => arg.replace(/^"|"$/g, '')) || [];
       const cmd = args.shift();
-
       try {
         await executeCommand(cmd, args, print);
       } catch (err) {
         print(`Error: ${err.message || err}`, true);
       }
-      updatePrompt();
+      updateCwdDisplay(); // refresh header after cd
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       if (historyIndex > 0) { historyIndex--; input.value = history[historyIndex]; }
@@ -78,11 +133,18 @@ export function initTerminal(container, projectRoot) {
     }
   });
 
-  container.addEventListener("click", () => input.focus());
-}
+  sendBtn?.addEventListener("click", () => {
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    input.focus();
+  });
 
+  container.addEventListener("click", (e) => {
+    if (e.target !== sendBtn) input.focus();
+  });
+}
+// The rest of the file (executeCommand, resolvePath) stays unchanged.
+// I've included them below for completeness.
 async function executeCommand(cmd, args, print) {
-  // 1. Git Operations (Native git2-rs)
   if (cmd === "git") {
     const subcmd = args[0];
     try {
@@ -124,7 +186,6 @@ async function executeCommand(cmd, args, print) {
     return;
   }
 
-  // 2. POSIX Operations (wasmi + busybox.wasm)
   if (["ls", "cat", "grep", "sed", "mkdir", "find", "pwd", "cd"].includes(cmd)) {
     if (cmd === "cd") {
       const target = args[0] || rootPath;

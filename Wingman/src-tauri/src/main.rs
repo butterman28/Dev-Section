@@ -558,11 +558,103 @@ fn git_checkout(path: String, branch_name: String) -> Result<String, String> {
 fn write_to_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
+#[tauri::command]
+fn create_directory(path: String) -> Result<(), String> {
+    std::fs::create_dir_all(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_file(path: String) -> Result<(), String> {
+    std::fs::File::create(&path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_item(path: String) -> Result<(), String> {
+    let path = std::path::PathBuf::from(&path);
+    if path.is_dir() {
+        std::fs::remove_dir_all(&path).map_err(|e| e.to_string())
+    } else {
+        std::fs::remove_file(&path).map_err(|e| e.to_string())
+    }
+}
+
+// ---------- Search ----------
+#[derive(serde::Serialize)]
+pub struct SearchMatch {
+    pub file_path: String,
+    pub line_number: usize,
+    pub line_content: String,
+}
+
+#[tauri::command]
+async fn search_project_files(
+    pattern: String,
+    root_path: String,
+    case_sensitive: bool,
+) -> Result<Vec<SearchMatch>, String> {
+    tokio::task::spawn_blocking(move || {
+        let root = std::path::PathBuf::from(&root_path);
+        if !root.exists() || !root.is_dir() {
+            return Err("Root path is not a directory".to_string());
+        }
+
+        let mut results = Vec::new();
+        let pattern_lower = if !case_sensitive {
+            Some(pattern.to_lowercase())
+        } else {
+            None
+        };
+
+        for entry in walkdir::WalkDir::new(&root)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| !is_ignored(e.path()))
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+        {
+            let path = entry.path();
+            // Skip files larger than 1 MB
+            if let Ok(meta) = std::fs::metadata(path) {
+                if meta.len() > 1_000_000 {
+                    continue;
+                }
+            }
+            // Read as string; skip if not UTF-8
+            let content = match std::fs::read_to_string(path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            // Search line by line
+            let lines: Vec<&str> = content.lines().collect();
+            for (idx, line) in lines.iter().enumerate() {
+                let line_num = idx + 1;
+                let match_found = if let Some(ref pl) = pattern_lower {
+                    line.to_lowercase().contains(pl)
+                } else {
+                    line.contains(&pattern)
+                };
+                if match_found {
+                    results.push(SearchMatch {
+                        file_path: path.to_string_lossy().to_string(),
+                        line_number: line_num,
+                        line_content: line.trim().to_string(),
+                    });
+                }
+            }
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_clipboard::init()) 
+        .plugin(tauri_plugin_clipboard::init())
         .invoke_handler(tauri::generate_handler![
             get_tree_for_path,
             get_launch_dir,
@@ -582,7 +674,11 @@ fn main() {
             git_add,
             git_commit,
             git_branch_list,
-            git_checkout
+            git_checkout,
+            create_directory, 
+            create_file,
+            delete_item,
+            search_project_files       
         ])
         .run(tauri::generate_context!())
         .expect("error while running Branch");

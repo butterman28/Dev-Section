@@ -1,6 +1,7 @@
 // src/assets/components/codeTree.js
 import { showSnackbar, createSnackbarContainer } from "./snackbar.js";
 import { getProjectState, updateProjectState, getActiveProject } from "./projects.js";
+import { showTextModal } from "./modal.js";
 
 const { invoke } = window.__TAURI__.core;
 
@@ -78,7 +79,7 @@ function createCodeTreePanel(projectId) {
   return panel;
 }
 
-function renderTabs(projectId) {
+export function renderTabs(projectId) {
   const state = projectStates.get(projectId);
   if (!state) return;
   const panelId = state.panelId;
@@ -214,6 +215,54 @@ export async function loadMissingFiles(projectId) {
   }
 }
 
+/**
+ * Filters a TreeNode to only include directories that contain selected files,
+ * and the selected files themselves.
+ * @param {TreeNode} node - The full tree node.
+ * @param {Set<string>} selectedPaths - Set of absolute file paths that are selected.
+ * @returns {TreeNode | null} - A filtered copy of the node, or null if nothing to show.
+ */
+function filterTreeForSelectedPaths(node, selectedPaths) {
+  // If it's a file, include it only if its path is in selectedPaths
+  if (!node.is_dir) {
+    return selectedPaths.has(node.path) ? { ...node, children: [] } : null;
+  }
+
+  // It's a directory: recursively filter children
+  const filteredChildren = node.children
+    .map(child => filterTreeForSelectedPaths(child, selectedPaths))
+    .filter(child => child !== null);
+
+  // Include this directory if it has any filtered child, or if the directory itself is selected
+  // (Directories can be selected via checkbox, but we only care about files for copying;
+  // still, if the dir is selected we include it to show the tree)
+  const dirSelected = selectedPaths.has(node.path);
+
+  if (filteredChildren.length === 0 && !dirSelected) {
+    return null;
+  }
+
+  // Return a copy with the filtered children
+  return {
+    ...node,
+    children: filteredChildren,
+  };
+}
+// Generate ASCII tree from a TreeNode
+function generateTreeString(node, prefix = "", isLast = true) {
+  if (!node) return "";
+  let result = "";
+  const connector = isLast ? "└── " : "├── ";
+  result += prefix + connector + node.name + (node.is_dir ? "/" : "") + "\n";
+  const childPrefix = prefix + (isLast ? "    " : "│   ");
+  if (node.children && node.children.length > 0) {
+    node.children.forEach((child, index) => {
+      const isLastChild = index === node.children.length - 1;
+      result += generateTreeString(child, childPrefix, isLastChild);
+    });
+  }
+  return result;
+}
 async function handleCheckboxChange(e, projectId) {
   if (!e.target.matches('input[type="checkbox"]')) return;
   const path = e.target.dataset.path;
@@ -338,24 +387,162 @@ export async function saveAllFiles(projectId) {
   }
 }
 
+// ==========Copy ALL project files ==========
 export async function copyAllFiles(projectId) {
   const state = projectStates.get(projectId);
-  if (!state) return;
-  const filePaths = Array.from(state.selectedPaths).filter(p => !state.knownDirs.has(p)).sort();
-  if (filePaths.length === 0) {
-    showSnackbar("No files to copy", { type: "info" });
+  if (!state) {
+    showSnackbar("No active project", { type: "info" });
     return;
   }
+
+  showProgress("Scanning project files...");
+  try {
+    const allPaths = await invoke("get_all_files_in_directory", { path: state.rootPath });
+    if (allPaths.length === 0) {
+      hideProgress();
+      showSnackbar("No files found in project", { type: "info" });
+      return;
+    }
+
+    showProgress(`Reading ${allPaths.length} files...`);
+    const fileContents = await invoke("read_multiple_files", { paths: allPaths });
+
+    let output = "";
+
+    // --- Use buildUnixTree to get a comprehensive directory tree ---
+    const treeText = buildUnixTree(allPaths, state.rootPath);
+    if (treeText) {
+      output += "Directory Tree:\n";
+      output += treeText;
+      output += "\n\n";
+    }
+
+    for (const file of fileContents) {
+      const relPath = file.path.replace(state.rootPath, "").replace(/^[\\/]/, "");
+      output += `# ${relPath}\n`;
+      output += file.content || (file.error ? `/* ERROR: ${file.error} */` : "");
+      output += "\n\n";
+    }
+
+    await invoke("write_to_clipboard", { text: output.trimEnd() });
+    showSnackbar(`Copied all ${allPaths.length} files + directory tree to clipboard.`, {
+      type: "success",
+      duration: 6000,
+    });
+  } catch (err) {
+    showSnackbar("Copy all failed: " + err.message, { type: "error" });
+  } finally {
+    hideProgress();
+  }
+}
+
+function buildUnixTree(paths, root) {
+  if (paths.length === 0) return '';
+
+  // Extract root folder name (e.g. "/Users/you/my-project" → "my-project")
+  const rootName = root.split(/[\\/]/).filter(part => part).pop() || 'project';
+
+  // Normalize paths to be relative to root
+  const relPaths = paths
+    .map(p => p.replace(root, '').replace(/^[\\/]/, ''))
+    .filter(p => p)
+    .sort();
+
+  // Build nested object starting from rootName
+  const tree = { [rootName]: {} };
+
+  for (const relPath of relPaths) {
+    const parts = relPath.split(/[\\/]/);
+    let current = tree[rootName];
+    for (const part of parts) {
+      if (!current[part]) current[part] = {};
+      current = current[part];
+    }
+  }
+
+  // Render recursively
+  function render(node, prefix = '', isRoot = true) {
+    const keys = Object.keys(node).sort();
+    let output = '';
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const isLast = i === keys.length - 1;
+      const linePrefix = prefix + (isRoot ? '' : isLast ? '└── ' : '├── ');
+      output += linePrefix + key + '\n';
+      if (Object.keys(node[key]).length > 0) {
+        const childPrefix = prefix + (isLast ? '    ' : '│   ');
+        output += render(node[key], childPrefix, false);
+      }
+    }
+    return output;
+  }
+
+  return render(tree, '', true).trimEnd();
+}
+// ========== COPY ONLY SELECTED (tabs) ==========
+export async function copySelectedFiles(projectId) {
+  const state = projectStates.get(projectId);
+  if (!state) {
+    showSnackbar("No active project", { type: "info" });
+    return;
+  }
+
+  // Get all selected paths (files + directories)
+  const allSelected = Array.from(state.selectedPaths).sort();
+
+  if (allSelected.length === 0) {
+    showSnackbar("No files or folders selected", { type: "info" });
+    return;
+  }
+
+  // Build the directory tree from selected paths (exactly like Branch)
+  const treeText = buildUnixTree(allSelected, state.rootPath);
+
   let output = "";
+  if (treeText) {
+    output += "Directory Tree:\n";
+    output += treeText;
+    output += "\n\n";
+  }
+
+  // Now add the content of each selected file (only files, not directories)
+  const filePaths = allSelected.filter(p => !state.knownDirs.has(p));
+
+  if (filePaths.length === 0) {
+    // If no files selected, just copy the tree
+    try {
+      await invoke("write_to_clipboard", { text: output.trimEnd() });
+      showSnackbar("Copied directory tree only.", { type: "success" });
+    } catch (err) {
+      showSnackbar("Copy failed: " + err.message, { type: "error" });
+    }
+    return;
+  }
+
+  // Load file contents (they should already be cached, but we can read fresh)
+  // We'll use the cached contents from state.fileContentsMap if available
   for (const path of filePaths) {
     const relPath = path.replace(state.rootPath, "").replace(/^[\\/]/, "");
-    output += `# ${relPath}\n${state.fileContentsMap.get(path) || ""}\n\n`;
+    output += `# ${relPath}\n`;
+    // Use cached content, or fallback to empty
+    output += state.fileContentsMap.get(path) || "";
+    output += "\n\n";
   }
+
   try {
     await invoke("write_to_clipboard", { text: output.trimEnd() });
-    showSnackbar("All files copied!", { type: "success" });
+    showSnackbar(`Copied ${filePaths.length} selected files + full directory tree.`, {
+      type: "success",
+      duration: 6000,
+      actions: [
+        {
+          label: "View Tree",
+          callback: () => showTextModal("Full Directory Tree", treeText),
+        },
+      ],
+    });
   } catch (err) {
-    showSnackbar("Copy failed", { type: "error" });
+    showSnackbar("Copy selected failed: " + err.message, { type: "error" });
   }
 }
 
@@ -369,6 +556,60 @@ export function clearAllSelections(projectId) {
   renderTabs(projectId);
   updateProjectState(projectId, { selectedPaths: state.selectedPaths, fileContentsMap: state.fileContentsMap, activeFilePath: state.activeFilePath });
   showSnackbar("Cleared all selections", { type: "info" });
+}
+
+// Load a single file's content if not cached
+async function loadSingleFile(projectId, filePath) {
+  const state = projectStates.get(projectId);
+  if (!state) return;
+  if (state.fileContentsMap.has(filePath)) return;
+  try {
+    const content = await invoke('read_file', { path: filePath });
+    state.fileContentsMap.set(filePath, content);
+    updateProjectState(projectId, { fileContentsMap: state.fileContentsMap });
+  } catch (err) {
+    state.fileContentsMap.set(filePath, `/* ERROR: ${err.message} */`);
+    updateProjectState(projectId, { fileContentsMap: state.fileContentsMap });
+  }
+}
+
+export async function openFileAtLine(projectId, filePath, lineNumber) {
+  const state = projectStates.get(projectId);
+  if (!state) return;
+
+  // Ensure the file is selected
+  state.selectedPaths.add(filePath);
+  // Ensure content is loaded
+  await loadSingleFile(projectId, filePath);
+  // Set as active
+  state.activeFilePath = filePath;
+  updateProjectState(projectId, {
+    selectedPaths: state.selectedPaths,
+    activeFilePath: state.activeFilePath,
+  });
+
+  // Re-render tabs and editor
+  renderTabs(projectId);
+  renderEditor(projectId); // We'll need to export renderEditor or call it inside renderTabs
+
+  // Scroll to line
+  const panelId = state.panelId;
+  const editor = document.querySelector(`#code-editor-${panelId}`);
+  if (editor && editor.value) {
+    // Find the offset of the line start
+    const lines = editor.value.split('\n');
+    if (lineNumber <= lines.length) {
+      let offset = 0;
+      for (let i = 0; i < lineNumber - 1; i++) {
+        offset += lines[i].length + 1; // +1 for newline
+      }
+      editor.selectionStart = editor.selectionEnd = offset;
+      // Focus and scroll to the line (approximate)
+      editor.focus();
+      const lineHeight = 20; // rough pixel per line
+      editor.scrollTop = (lineNumber - 1) * lineHeight;
+    }
+  }
 }
 
 // --- Global overlay helpers (unchanged) ---

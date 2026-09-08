@@ -122,6 +122,13 @@
           <span>Refresh</span>
         </button>
         
+        <button id="toggle-terminal" class="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
+          <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+          <span>Toggle Terminal</span>
+        </button>
+
         <button id="toggle-sidebar" class="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
           <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
@@ -145,11 +152,20 @@
           <span>Copy Current File</span>
         </button>
         
+        <!-- existing "Copy All Files" button -->
         <button id="copy-all-files" class="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
           <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/>
           </svg>
           <span>Copy All Files</span>
+        </button>
+
+        <!-- NEW: Copy Selected button -->
+        <button id="copy-selected-files" class="w-full px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
+          <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2-5a3 3 0 01-3 3H7a3 3 0 01-3-3V7a3 3 0 013-3h5.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a3 3 0 01-3 3z"/>
+          </svg>
+          <span>Copy Selected</span>
         </button>
         
         <button id="clear-all-files" class="w-full px-4 py-3 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors">
@@ -172,6 +188,25 @@
           </svg>
         </button>
       </div>
+      
+      <!-- Sidebar Search Bar -->
+<div class="p-2 border-b border-slate-200 bg-white sticky top-0 z-10">
+  <div class="relative">
+    <input
+      type="text"
+      id="search-input"
+      placeholder="Search files (snippet or line)..."
+      class="w-full px-3 py-1.5 text-sm border rounded-md border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8"
+    />
+    <button id="search-clear" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 hidden">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+      </svg>
+    </button>
+    <!-- Results Dropdown -->
+    <div id="search-results" class="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-xl border border-slate-200 max-h-72 overflow-y-auto hidden z-50"></div>
+  </div>
+</div>
 
       <!-- Project List -->
       <div id="project-list" class="mb-3 border-b border-slate-200 pb-2">
@@ -192,8 +227,71 @@
       <!-- Code Tree Panel will be injected here by codeTree.js -->
     </main>
 
+
+    <!-- Terminal (slides up from bottom) -->
+    <!-- Terminal (slides up from bottom) -->
+<div id="terminal-container" 
+    class="fixed bottom-0 left-0 right-0 z-[10000] bg-slate-900 border-t border-slate-700 shadow-2xl transform translate-y-full transition-transform duration-300 ease-out max-h-[70vh] sm:max-h-[50vh] flex flex-col overflow-hidden">
+  <!-- Terminal header -->
+  <!-- Terminal header -->
+<div class="flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700 shrink-0 pt-safe">
+  <div class="flex items-center gap-2 min-w-0 flex-1">
+    <span class="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
+    <div class="flex flex-col min-w-0">
+      <span class="text-slate-300 text-xs font-bold truncate">Branch Terminal</span>
+      <span id="terminal-cwd" class="text-slate-500 text-[10px] font-mono truncate" title=""></span>
+    </div>
+  </div>
+  <div class="flex gap-1 shrink-0">
+    <button id="terminal-clear" class="text-slate-400 hover:text-white text-xs px-3 py-1.5 rounded-md hover:bg-slate-700 transition-colors">Clear</button>
+    <button id="terminal-close" class="text-slate-400 hover:text-white text-xl leading-none w-8 h-8 flex items-center justify-center rounded-md hover:bg-slate-700 transition-colors">&times;</button>
+  </div>
+</div>
+
+  <!-- Terminal output -->
+  <div id="terminal-output" class="flex-1 overflow-y-auto p-3 whitespace-pre-wrap break-all text-xs sm:text-sm text-gray-100 font-mono overscroll-contain"></div>
+
+  <!-- Terminal input (mobile-optimized) -->
+  <div class="shrink-0 bg-slate-800 border-t border-slate-700 pb-safe">
+    <!-- Prompt row (truncates on small screens) -->
+    <div class="flex items-center px-3 pt-2 pb-1 gap-2">
+      <span id="terminal-prompt" 
+            class="text-blue-400 text-[11px] font-mono whitespace-nowrap overflow-hidden text-ellipsis max-w-[70%] sm:max-w-none"
+            title=""></span>
+      <span class="text-slate-600 text-[10px] shrink-0">›</span>
+    </div>
+    
+    <!-- Input row -->
+      <!-- Terminal input (mobile-optimized) -->
+    <div class="shrink-0 bg-slate-800 border-t border-slate-700 pb-safe">
+      <div class="flex items-center gap-2 px-2 py-2">
+        <div class="flex-1 flex items-center bg-slate-900/60 border border-slate-700 rounded-lg px-3 min-h-[44px] focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500/30 transition-colors">
+          <span class="text-green-500 font-mono text-sm mr-2 select-none">$</span>
+          <input id="terminal-input" 
+                type="text"
+                inputmode="text"
+                enterkeyhint="send"
+                class="flex-1 bg-transparent border-none outline-none text-green-400 text-sm font-mono min-h-[40px] placeholder:text-slate-600 overflow-x-auto whitespace-nowrap"
+                placeholder="type a command..."
+                autocomplete="off" 
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false" />
+        </div>
+        <button id="terminal-send" 
+                class="shrink-0 w-11 h-11 flex items-center justify-center bg-blue-600 hover:bg-blue-500 active:bg-blue-700 rounded-lg transition-colors"
+                aria-label="Run command">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 5l7 7-7 7M5 12h14"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    </div>
+  </div>
+
     <!-- Load UI Logic Scripts -->
     <script type="module" src="/assets/components/sidebar.js"></script>
     <script type="module" src="/assets/components/menu.js"></script>
-  </body>
+</body>
 </html>
